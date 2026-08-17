@@ -7,8 +7,8 @@
  * the client, malloc'd and owned by the caller.
  */
 #include "faultcache/faultcache.h"
-#include "faultcache/faultcache_remote.h"
-#include "test_util.h"
+#include "faultcache/faultcache-client-server.h"
+#include "test-util.h"
 
 #include <errno.h>
 #include <stdint.h>
@@ -76,6 +76,6 @@ int main(void) {
     CHECK(waitpid(pid, &status, 0) == pid);
     CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
 
-    printf("test_remote_reject: OK\n");
+    printf("test_client_server_reject: OK\n");
     return 0;
 }

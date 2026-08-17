@@ -5,9 +5,9 @@
 
 #define _GNU_SOURCE
 #include "faultcache/faultcache.h"
-#include "faultcache/faultcache_debug.h"
-#include "faultcache/faultcache_remote.h"
-#include "faultcache_wire.h"
+#include "faultcache/faultcache-debug.h"
+#include "faultcache/faultcache-client-server.h"
+#include "faultcache-wire.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -50,7 +50,7 @@ struct fc_region {
     int wake_fd;   /* eventfd used to ask the handler thread to stop */
     pthread_t thread;
 
-    /* Debug-only introspection (see faultcache_debug.h), guarded by
+    /* Debug-only introspection (see faultcache-debug.h), guarded by
      * pool->lock rather than by the handler thread's usual lock-free
      * ownership of initialized[], since these are read cross-thread. */
     uint32_t chunks_resolved;
@@ -402,7 +402,7 @@ fail_alloc: {
 
 /*
  * Phase 1 of remote region creation: asks the server to resolve
- * `descriptor` into a chunk layout (see faultcache_remote.h -- the
+ * `descriptor` into a chunk layout (see faultcache-client-server.h -- the
  * server's factory owns chunk layout now, not the caller). On success,
  * returns a malloc'd array of `*out_nchunks` chunk sizes (caller frees
  * with free()); returns NULL on failure (errno set; ECONNREFUSED if the

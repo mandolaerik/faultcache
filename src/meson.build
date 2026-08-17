@@ -1,7 +1,7 @@
 # © 2026 Erik Carstensen
 # SPDX-License-Identifier: MPL-2.0
 
-faultcache_lib = library('faultcache', 'faultcache.c', 'faultcache_server.c',
+faultcache_lib = library('faultcache', 'faultcache.c', 'faultcache-server.c',
   include_directories: inc,
   dependencies: [thread_dep],
   install: true)
@@ -11,7 +11,7 @@ faultcache_dep = declare_dependency(
   include_directories: inc)
 
 install_headers('../include/faultcache/faultcache.h',
-  '../include/faultcache/faultcache_remote.h',
+  '../include/faultcache/faultcache-client-server.h',
   subdir: 'faultcache')
 
 pkg = import('pkgconfig')

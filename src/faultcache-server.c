@@ -4,8 +4,8 @@
  */
 
 #define _GNU_SOURCE
-#include "faultcache/faultcache_remote.h"
-#include "faultcache_wire.h"
+#include "faultcache/faultcache-client-server.h"
+#include "faultcache-wire.h"
 
 #include <errno.h>
 #include <linux/userfaultfd.h>
@@ -23,7 +23,7 @@
 
 /* One per client handoff attached to a region (possibly several per
  * region, when multiple handoffs share a descriptor -- see
- * faultcache_remote.h). */
+ * faultcache-client-server.h). */
 struct fc_server_mapping {
     struct fc_server_mapping *next;
     int uffd;
@@ -468,7 +468,7 @@ int fc_server_run(fc_server_t *server, int conn_fd) {
     }
 
     /* Each fc_client_region_create() call is a strict resolve-then-attach
-     * ping-pong on this connection (see faultcache_wire.h); this tracks
+     * ping-pong on this connection (see faultcache-wire.h); this tracks
      * which message conn_fd's next readability event should be parsed
      * as. */
     enum { CONN_WAIT_RESOLVE, CONN_WAIT_ATTACH } conn_state = CONN_WAIT_RESOLVE;

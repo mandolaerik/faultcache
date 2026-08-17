@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: MPL-2.0
  *
  * Wire format shared between fc_client_region_create()'s client half (in
- * faultcache.c) and the server's accept loop (in faultcache_server.c).
+ * faultcache.c) and the server's accept loop (in faultcache-server.c).
  * Internal to this repo's build only -- not installed, not part of the
  * public API.
  *
@@ -12,7 +12,7 @@
  *
  *   1. Resolve: the client sends only the descriptor -- it doesn't know
  *      the chunk layout yet, since that's decided entirely by the
- *      server's factory now (see faultcache_remote.h). The server
+ *      server's factory now (see faultcache-client-server.h). The server
  *      replies with the chunk layout, or rejects the descriptor.
  *   2. Attach: now knowing the total size, the client creates its local
  *      memfd/mmap/uffd mapping, then sends its uffd (via SCM_RIGHTS) and

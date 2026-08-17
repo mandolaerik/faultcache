@@ -4,7 +4,7 @@
  */
 
 #include "faultcache/faultcache.h"
-#include "test_util.h"
+#include "test-util.h"
 
 #include <string.h>
 

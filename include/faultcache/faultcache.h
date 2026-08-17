@@ -18,7 +18,7 @@
  * are actually read.
  *
  * This header covers the in-process API: chunk content is derived
- * in-process by init_chunk(). See faultcache_remote.h for the split
+ * in-process by init_chunk(). See faultcache-client-server.h for the split
  * client/server variant, where content is derived by a separate server
  * process.
  *
@@ -36,7 +36,7 @@ extern "C" {
 
 /*
  * Tracks the regions carved out of it (see fc_client_pool_t in
- * faultcache_remote.h for the split client/server equivalent). A pool is
+ * faultcache-client-server.h for the split client/server equivalent). A pool is
  * expected to eventually also own a shared, size-bounded cache of
  * resident chunks (possibly spanning several regions) with LRU eviction;
  * for now it just tracks region lifetimes.

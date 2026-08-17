@@ -9,8 +9,8 @@
  * many) faults on it, yet every connection reads back correct content.
  */
 #include "faultcache/faultcache.h"
-#include "faultcache/faultcache_remote.h"
-#include "test_util.h"
+#include "faultcache/faultcache-client-server.h"
+#include "test-util.h"
 
 #include <pthread.h>
 #include <stdint.h>
@@ -150,7 +150,7 @@ int main(void) {
     close(counter_pipe[0]);
     CHECK(count == NCHUNKS);
 
-    printf("test_remote_shared: OK (init_chunk called %d times for %d "
+    printf("test_client_server_shared: OK (init_chunk called %d times for %d "
            "chunks x 2 connections)\n",
            count, NCHUNKS);
     return 0;

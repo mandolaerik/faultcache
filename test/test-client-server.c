@@ -8,8 +8,8 @@
  * reading from it, letting the child resolve its faults.
  */
 #include "faultcache/faultcache.h"
-#include "faultcache/faultcache_remote.h"
-#include "test_util.h"
+#include "faultcache/faultcache-client-server.h"
+#include "test-util.h"
 
 #include <stdint.h>
 #include <string.h>
@@ -96,6 +96,6 @@ int main(void) {
     CHECK(waitpid(pid, &status, 0) == pid);
     CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
 
-    printf("test_remote: OK\n");
+    printf("test_client_server: OK\n");
     return 0;
 }

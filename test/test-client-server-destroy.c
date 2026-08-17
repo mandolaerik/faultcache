@@ -9,8 +9,8 @@
  * the destroy-call counter can be an ordinary shared variable.
  */
 #include "faultcache/faultcache.h"
-#include "faultcache/faultcache_remote.h"
-#include "test_util.h"
+#include "faultcache/faultcache-client-server.h"
+#include "test-util.h"
 
 #include <pthread.h>
 #include <stdint.h>
@@ -113,6 +113,6 @@ int main(void) {
     fc_server_destroy(server);
     CHECK(g_destroy_calls == 1); /* freed exactly once at teardown */
 
-    printf("test_remote_destroy: OK\n");
+    printf("test_client_server_destroy: OK\n");
     return 0;
 }
