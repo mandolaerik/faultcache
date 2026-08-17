@@ -12,6 +12,9 @@ init_chunk callback - unaccessed chunks are never touched.
     region = pool.Region([100, 200, 4096], init_chunk)
     region[50:150]   # only touches chunk 0 and chunk 1
 
+Region.view() returns a zero-copy memoryview instead of a bytes copy - see
+its docstring for important lifetime/safety caveats.
+
 Env var FAULTCACHE_LIBRARY overrides the shared library path/name used to
 locate libfaultcache (useful to point at a build directory before install).
 """
@@ -84,13 +87,6 @@ _lib.fc_region_debug_stats.argtypes = [
 ]
 _lib.fc_region_debug_stats.restype = ctypes.c_int
 
-# ctypes.string_at()/memmove() are implemented in-process and never release
-# the GIL. Reading a not-yet-resolved page blocks in the kernel until the
-# handler thread services the fault, and its callback trampoline needs the
-# GIL (via PyGILState_Ensure) to call back into Python - so reading through
-# those builtins can deadlock the whole process. A real foreign-function
-# call made through a CDLL (like this libc memcpy) does release the GIL for
-# the duration of the call, so route all reads through it instead.
 _libc = ctypes.CDLL(None, use_errno=True)
 _libc.memcpy.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_size_t]
 _libc.memcpy.restype = ctypes.c_void_p
@@ -142,6 +138,7 @@ class Region:
         self._pool = pool
         self._addr: Optional[int] = addr
         self._size = _lib.fc_region_size(pool._handle, addr)
+        self._view_count = 0
         pool._regions.add(self)
 
     @property
@@ -163,9 +160,63 @@ class Region:
         return DebugStats(stats.nchunks, stats.chunks_resolved,
                            stats.faults_handled)
 
+    @staticmethod
+    def _view_released(region: "Region") -> None:
+        region._view_count -= 1
+
+    def view(self, start: int = 0, stop: Optional[int] = None,
+             step: int = 1) -> memoryview:
+        """Zero-copy memoryview over region[start:stop:step].
+
+        Unlike __getitem__ (which always returns a fresh bytes copy,
+        matching mmap's convention), this shares the region's own memory
+        directly via ctypes.from_address() - no copy is made, so it's
+        cheap for large ranges. With the mprotect+SIGSEGV backend (see
+        src/faultcache-sigsegv.c), any access to the returned view -
+        including from unrelated C code such as numpy - resolves
+        unresolved chunks lazily and safely on whichever thread touches
+        them, same as __getitem__. There is no separate "populate first"
+        step to take here, unlike an earlier userfaultfd-based design
+        that needed one to dodge a GIL-deadlock class of bug specific to
+        that backend (see repo notes) - resolving synchronously on the
+        faulting thread itself, as this backend does, is what removes
+        that requirement.
+
+        SAFETY: plain ctypes buffers (and the memoryviews wrapping them)
+        carry no reference back to this Region - ctypes has no way to
+        hook CPython's real buffer-export refcounting from pure Python
+        (PyMemoryView_FromBuffer(), notably, silently discards any
+        'obj' owner reference passed to it - it is not a substitute for
+        a true buffer-protocol exporter). To catch the most common
+        misuse, this Region tracks outstanding view() results via
+        weakref.finalize() and close() raises if any are still alive;
+        this keeps the Region object itself alive for as long as a
+        view() result is (finalize holds a strong reference until it
+        fires), which also prevents __del__ from firing prematurely.
+        However, further slicing of the returned memoryview (e.g.
+        region.view()[10:20]) produces additional, UNTRACKED aliases of
+        the same memory that do not keep anything alive on their own -
+        keep the original view() return value (or the Region itself)
+        referenced for as long as any such further slice is in use.
+        Using a view after the owning Region has been closed is
+        undefined behavior (use-after-free).
+        """
+        if self._addr is None:
+            raise ValueError("Region is closed")
+        arr = (ctypes.c_uint8 * self._size).from_address(self._addr)
+        mv = memoryview(arr).cast("B")[start:stop:step]
+        self._view_count += 1
+        weakref.finalize(mv, Region._view_released, self)
+        return mv
+
     def close(self) -> None:
         if self._addr is None:
             return
+        if self._view_count > 0:
+            raise BufferError(
+                f"cannot close Region: {self._view_count} outstanding "
+                "view() result(s)"
+            )
         if self._pool._handle is not None:
             _lib.fc_region_destroy(self._pool._handle, self._addr)
         self._addr = None

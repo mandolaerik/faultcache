@@ -162,6 +162,77 @@ def test_access_after_unmap_is_fatal():
     pool.close()
 
 
+def test_view_zero_copy():
+    def init_chunk(chunk, buf):
+        buf[:] = bytes(i % 256 for i in range(len(buf)))
+
+    with faultcache.Pool() as pool:
+        region = pool.Region([PAGE, PAGE], init_chunk)
+
+        v = region.view(0, 8)
+        assert isinstance(v, memoryview)
+        assert bytes(v) == bytes(range(8))
+
+        # step != 1, spanning into the second (still-unresolved) chunk.
+        v2 = region.view(PAGE - 8, PAGE + 8, 2)
+        assert bytes(v2) == bytes(region[PAGE - 8:PAGE + 8:2])
+
+        stats = region.debug_stats()
+        assert stats.chunks_resolved == 2  # touched by v2 above
+
+        # Drop the outstanding views before the Pool context manager
+        # closes the region on exit (close() refuses otherwise).
+        del v, v2
+
+
+def test_view_lifetime_tracking():
+    import gc
+    import weakref
+
+    def init_chunk(chunk, buf):
+        buf[:] = b"\0" * len(buf)
+
+    pool = faultcache.Pool()
+    region = pool.Region([PAGE], init_chunk)
+
+    v = region.view(0, 10)
+    assert region._view_count == 1
+
+    # A live view() result must keep the owning Region alive even if the
+    # caller drops its own reference (weakref.finalize on the view holds
+    # a strong ref to the Region until the view itself is collected).
+    alive = []
+    wr = weakref.ref(region, lambda r: alive.append(True))
+    del region
+    gc.collect()
+    assert not alive, "Region was collected while a view() result is alive"
+
+    assert bytes(v[:4]) == b"\0\0\0\0"
+    del v
+    gc.collect()
+    assert alive, "Region was not collected after its view() result died"
+
+    pool.close()
+
+
+def test_view_blocks_close():
+    def init_chunk(chunk, buf):
+        buf[:] = b"\0" * len(buf)
+
+    with faultcache.Pool() as pool:
+        region = pool.Region([PAGE], init_chunk)
+        v = region.view(0, 10)
+        try:
+            region.close()
+            raise AssertionError("close() should refuse while a view() "
+                                  "result is outstanding")
+        except BufferError:
+            pass
+        del v
+        region.close()
+        assert region.closed
+
+
 def main():
     tests = [
         test_pool_maxsize_not_implemented,
@@ -169,6 +240,9 @@ def main():
         test_debug_stats,
         test_boundary_sharing_group,
         test_slice_step,
+        test_view_zero_copy,
+        test_view_lifetime_tracking,
+        test_view_blocks_close,
         test_pool_close_closes_regions,
         test_write_is_fatal,
         test_access_after_unmap_is_fatal,
