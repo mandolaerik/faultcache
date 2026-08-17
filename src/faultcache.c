@@ -12,12 +12,10 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <linux/userfaultfd.h>
-#include <poll.h>
 #include <pthread.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/eventfd.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
@@ -29,9 +27,15 @@
 #define UFFD_USER_MODE_ONLY 1
 #endif
 
+/*
+ * The client half of the client/server split (see
+ * faultcache-client-server.h): resolution happens in a separate server
+ * process, reached via UFFDIO_COPY over the uffd fd handed off at
+ * creation time -- unlike fc_pool_t (src/faultcache-sigsegv.c), a
+ * client region has no local handler thread of its own.
+ */
 struct fc_region {
     struct fc_region *next;
-    struct fc_pool_impl *pool; /* back-pointer, for locking debug counters below */
 
     void *base;
     size_t total_size;  /* exact sum(chunk_sizes), reported by *_region_size() */
@@ -40,37 +44,17 @@ struct fc_region {
 
     uint32_t nchunks;
     size_t *chunk_start;   /* prefix sums, nchunks+1 entries */
-    bool *initialized;     /* nchunks entries, handler thread only */
-
-    fc_init_chunk_fn_t init_chunk;
-    void *user_data;
+    bool *initialized;     /* nchunks entries */
 
     int memfd;     /* shared backing storage for `base`, MAP_SHARED */
     int uffd;
-    int wake_fd;   /* eventfd used to ask the handler thread to stop */
-    pthread_t thread;
-
-    /* Debug-only introspection (see faultcache-debug.h), guarded by
-     * pool->lock rather than by the handler thread's usual lock-free
-     * ownership of initialized[], since these are read cross-thread. */
-    uint32_t chunks_resolved;
-    uint32_t faults_handled;
 };
 
-/*
- * Shared region-tracking bookkeeping for both in-process and client
- * pools -- identical mechanics either way (a mutex plus a linked list of
- * regions), but wrapped in the two distinct fc_pool/fc_client_pool tags
- * below so the two APIs can never be mixed up at compile time, even
- * though their implementation is one and the same.
- */
+/* Region-tracking bookkeeping for fc_client_pool_t: a mutex plus a
+ * linked list of regions. */
 struct fc_pool_impl {
     pthread_mutex_t lock;
     struct fc_region *regions;
-};
-
-struct fc_pool {
-    struct fc_pool_impl impl;
 };
 
 struct fc_client_pool {
@@ -93,14 +77,6 @@ static void pool_impl_teardown(struct fc_pool_impl *impl) {
     pthread_mutex_destroy(&impl->lock);
 }
 
-fc_pool_t *fc_pool_create(void) {
-    struct fc_pool *pool = malloc(sizeof(*pool));
-    if (!pool)
-        return NULL;
-    pool_impl_init(&pool->impl);
-    return pool;
-}
-
 fc_client_pool_t *fc_client_pool_create(void) {
     struct fc_client_pool *pool = malloc(sizeof(*pool));
     if (!pool)
@@ -110,30 +86,12 @@ fc_client_pool_t *fc_client_pool_create(void) {
 }
 
 static void region_teardown(struct fc_region *r) {
-    /* Remote regions (fc_client_region_create()) have no local handler
-     * thread or wake_fd: their faults are serviced by a server process
-     * instead, via the uffd fd handed off at creation time. */
-    if (r->wake_fd >= 0) {
-        uint64_t one = 1;
-        ssize_t unused = write(r->wake_fd, &one, sizeof(one));
-        (void)unused;
-        pthread_join(r->thread, NULL);
-        close(r->wake_fd);
-    }
-
     close(r->uffd); /* implicitly unregisters the range */
     munmap(r->base, r->mapped_size);
     close(r->memfd);
     free(r->chunk_start);
     free(r->initialized);
     free(r);
-}
-
-void fc_pool_destroy(fc_pool_t *pool) {
-    if (!pool)
-        return;
-    pool_impl_teardown(&pool->impl);
-    free(pool);
 }
 
 void fc_client_pool_destroy(fc_client_pool_t *pool) {
@@ -181,223 +139,6 @@ static size_t page_floor(size_t x, size_t page_size) {
 
 static size_t page_ceil(size_t x, size_t page_size) {
     return page_floor(x + page_size - 1, page_size);
-}
-
-/* Binary search for the chunk covering byte offset `off`. */
-static uint32_t find_chunk(const struct fc_region *r, size_t off) {
-    uint32_t lo = 0, hi = r->nchunks - 1;
-    while (lo < hi) {
-        uint32_t mid = lo + (hi - lo + 1) / 2;
-        if (r->chunk_start[mid] <= off)
-            lo = mid;
-        else
-            hi = mid - 1;
-    }
-    return lo;
-}
-
-/*
- * Resolve a single page-fault. Because chunk boundaries need not be
- * page-aligned, a page can straddle two (or more) chunks; whenever that
- * happens every chunk touching the affected pages is initialized and
- * committed together in one UFFDIO_COPY, so no chunk is ever left
- * half-initialized on a shared page. Only ever called from the region's
- * single handler thread, so `initialized[]` needs no locking.
- */
-static void resolve_fault(struct fc_region *r, size_t fault_off) {
-    uint32_t c0 = find_chunk(r, fault_off);
-    if (r->initialized[c0])
-        return; /* stale duplicate fault notification */
-
-    uint32_t lo = c0, hi = c0;
-    size_t page_lo = page_floor(r->chunk_start[lo], r->page_size);
-    size_t page_hi = page_ceil(r->chunk_start[hi + 1], r->page_size);
-
-    while (lo > 0 && r->chunk_start[lo] > page_lo) {
-        lo--;
-        page_lo = page_floor(r->chunk_start[lo], r->page_size);
-    }
-    while (hi + 1 < r->nchunks && r->chunk_start[hi + 1] < page_hi) {
-        hi++;
-        page_hi = page_ceil(r->chunk_start[hi + 1], r->page_size);
-    }
-
-    size_t buf_len = page_hi - page_lo;
-    /* zeroed so that any tail padding past the last chunk (or bytes not
-     * covered by any chunk on a shared boundary page) reads back as 0. */
-    void *buf = calloc(1, buf_len);
-    if (!buf)
-        return; /* faulting thread stays blocked; nothing sane to do here */
-
-    uint32_t newly_resolved = 0;
-    for (uint32_t i = lo; i <= hi; i++) {
-        if (r->initialized[i])
-            continue;
-        size_t chunk_size = r->chunk_start[i + 1] - r->chunk_start[i];
-        void *dst = (char *)buf + (r->chunk_start[i] - page_lo);
-        r->init_chunk(i, dst, chunk_size, r->user_data);
-        r->initialized[i] = true;
-        newly_resolved++;
-    }
-
-    pthread_mutex_lock(&r->pool->lock);
-    r->chunks_resolved += newly_resolved;
-    r->faults_handled++;
-    pthread_mutex_unlock(&r->pool->lock);
-
-    struct uffdio_copy copy = {
-        .dst = (unsigned long)((char *)r->base + page_lo),
-        .src = (unsigned long)buf,
-        .len = buf_len,
-        .mode = 0,
-    };
-    if (ioctl(r->uffd, UFFDIO_COPY, &copy) < 0 && errno != EEXIST) {
-        /* Nothing better to do: leave the faulting thread blocked rather
-         * than risk handing back undefined memory. */
-    }
-
-    free(buf);
-}
-
-static void *handler_thread_main(void *arg) {
-    struct fc_region *r = arg;
-    struct pollfd pfds[2] = {
-        {.fd = r->uffd, .events = POLLIN},
-        {.fd = r->wake_fd, .events = POLLIN},
-    };
-
-    for (;;) {
-        int n = poll(pfds, 2, -1);
-        if (n < 0) {
-            if (errno == EINTR)
-                continue;
-            break;
-        }
-        if (pfds[1].revents & POLLIN)
-            break; /* fc_region_destroy() asked us to stop */
-        if (!(pfds[0].revents & POLLIN))
-            continue;
-
-        struct uffd_msg msg;
-        ssize_t rd = read(r->uffd, &msg, sizeof(msg));
-        if (rd < 0) {
-            if (errno == EAGAIN || errno == EINTR)
-                continue;
-            break;
-        }
-        if (rd != sizeof(msg) || msg.event != UFFD_EVENT_PAGEFAULT)
-            continue;
-
-        size_t fault_addr = (size_t)msg.arg.pagefault.address;
-        size_t fault_off = fault_addr - (size_t)r->base;
-        resolve_fault(r, fault_off);
-    }
-    return NULL;
-}
-
-fc_region_t fc_region_create(fc_pool_t *pool,
-                                          uint32_t nchunks,
-                                          const size_t *chunk_sizes,
-                                          fc_init_chunk_fn_t init_chunk,
-                                          void *user_data) {
-    if (!pool || nchunks == 0 || !chunk_sizes || !init_chunk) {
-        errno = EINVAL;
-        return NULL;
-    }
-
-    size_t total_size = 0;
-    for (uint32_t i = 0; i < nchunks; i++) {
-        if (chunk_sizes[i] == 0 || total_size + chunk_sizes[i] < total_size) {
-            errno = EINVAL;
-            return NULL;
-        }
-        total_size += chunk_sizes[i];
-    }
-
-    struct fc_region *r = calloc(1, sizeof(*r));
-    if (!r)
-        return NULL;
-    r->memfd = -1;
-
-    r->chunk_start = malloc((size_t)(nchunks + 1) * sizeof(size_t));
-    r->initialized = calloc(nchunks, sizeof(bool));
-    if (!r->chunk_start || !r->initialized)
-        goto fail_alloc;
-
-    size_t acc = 0;
-    for (uint32_t i = 0; i < nchunks; i++) {
-        r->chunk_start[i] = acc;
-        acc += chunk_sizes[i];
-    }
-    r->chunk_start[nchunks] = acc;
-
-    r->total_size = total_size;
-    r->nchunks = nchunks;
-    r->page_size = (size_t)sysconf(_SC_PAGESIZE);
-    r->init_chunk = init_chunk;
-    r->user_data = user_data;
-    r->uffd = -1;
-    r->wake_fd = -1;
-
-    r->mapped_size = page_ceil(total_size, r->page_size);
-
-    /* memfd + MAP_SHARED (not private anonymous) so a future fork()/spawn()
-     * resolver process can be handed a mapping of the same physical pages. */
-    r->memfd = memfd_create("faultcache-region", MFD_CLOEXEC);
-    if (r->memfd < 0)
-        goto fail_alloc;
-    if (ftruncate(r->memfd, (off_t)r->mapped_size) < 0)
-        goto fail_alloc;
-
-    r->base = mmap(NULL, r->mapped_size, PROT_READ, MAP_SHARED, r->memfd, 0);
-    if (r->base == MAP_FAILED)
-        goto fail_alloc;
-
-    r->uffd = (int)syscall(SYS_userfaultfd,
-                            O_CLOEXEC | O_NONBLOCK | UFFD_USER_MODE_ONLY);
-    if (r->uffd < 0)
-        goto fail_map;
-
-    struct uffdio_api api = {.api = UFFD_API, .features = 0};
-    if (ioctl(r->uffd, UFFDIO_API, &api) < 0)
-        goto fail_uffd;
-
-    struct uffdio_register reg = {
-        .range = {.start = (unsigned long)r->base, .len = r->mapped_size},
-        .mode = UFFDIO_REGISTER_MODE_MISSING,
-    };
-    if (ioctl(r->uffd, UFFDIO_REGISTER, &reg) < 0)
-        goto fail_uffd;
-
-    r->wake_fd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
-    if (r->wake_fd < 0)
-        goto fail_register;
-
-    r->pool = &pool->impl;
-    if (pthread_create(&r->thread, NULL, handler_thread_main, r) != 0)
-        goto fail_wakefd;
-
-    pool_add(&pool->impl, r);
-    return r->base;
-
-fail_wakefd:
-    close(r->wake_fd);
-fail_register:
-    ioctl(r->uffd, UFFDIO_UNREGISTER, &reg.range);
-fail_uffd:
-    close(r->uffd);
-fail_map:
-    munmap(r->base, r->mapped_size);
-fail_alloc: {
-    int saved_errno = errno ? errno : ENOMEM;
-    if (r->memfd >= 0)
-        close(r->memfd);
-    free(r->chunk_start);
-    free(r->initialized);
-    free(r);
-    errno = saved_errno;
-    return NULL;
-}
 }
 
 /*
@@ -607,12 +348,7 @@ fc_client_region_t fc_client_region_create(fc_client_pool_t *pool,
     r->total_size = total_size;
     r->nchunks = nchunks;
     r->page_size = (size_t)sysconf(_SC_PAGESIZE);
-    /* Resolved remotely: no local init_chunk/user_data, and no local
-     * handler thread (see the wake_fd == -1 check in region_teardown()). */
-    r->init_chunk = NULL;
-    r->user_data = NULL;
     r->uffd = -1;
-    r->wake_fd = -1;
 
     r->mapped_size = page_ceil(total_size, r->page_size);
 
@@ -650,7 +386,6 @@ fc_client_region_t fc_client_region_create(fc_client_pool_t *pool,
         goto fail_uffd;
     }
 
-    r->pool = &pool->impl;
     pool_add(&pool->impl, r);
     return r->base;
 
@@ -668,27 +403,6 @@ fail_alloc: {
     errno = saved_errno;
     return NULL;
 }
-}
-
-int fc_region_destroy(fc_pool_t *pool, fc_region_t region) {
-    if (!pool) {
-        errno = EINVAL;
-        return -1;
-    }
-    struct fc_region *r = pool_remove(&pool->impl, region);
-    if (!r) {
-        errno = EINVAL;
-        return -1;
-    }
-    region_teardown(r);
-    return 0;
-}
-
-size_t fc_region_size(fc_pool_t *pool, fc_region_t region) {
-    if (!pool)
-        return 0;
-    struct fc_region *r = pool_find(&pool->impl, region);
-    return r ? r->total_size : 0;
 }
 
 int fc_client_region_destroy(fc_client_pool_t *pool,
@@ -712,27 +426,4 @@ size_t fc_client_region_size(fc_client_pool_t *pool,
         return 0;
     struct fc_region *r = pool_find(&pool->impl, region);
     return r ? r->total_size : 0;
-}
-
-int fc_region_debug_stats(fc_pool_t *pool, fc_region_t region,
-                                 struct fc_region_debug_stats *out) {
-    if (!pool || !out) {
-        errno = EINVAL;
-        return -1;
-    }
-
-    pthread_mutex_lock(&pool->impl.lock);
-    struct fc_region *r = pool->impl.regions;
-    while (r && r->base != region)
-        r = r->next;
-    if (!r) {
-        pthread_mutex_unlock(&pool->impl.lock);
-        errno = EINVAL;
-        return -1;
-    }
-    out->nchunks = r->nchunks;
-    out->chunks_resolved = r->chunks_resolved;
-    out->faults_handled = r->faults_handled;
-    pthread_mutex_unlock(&pool->impl.lock);
-    return 0;
 }

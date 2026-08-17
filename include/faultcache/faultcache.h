@@ -22,7 +22,9 @@
  * client/server variant, where content is derived by a separate server
  * process.
  *
- * Implemented on Linux using userfaultfd(2).
+ * Implemented on Linux via mmap(PROT_NONE) + a process-wide SIGSEGV
+ * handler: touching an unresolved chunk faults synchronously on the
+ * accessing thread, which resolves it inline before retrying the access.
  */
 #ifndef FAULTCACHE_H
 #define FAULTCACHE_H
@@ -57,9 +59,12 @@ void fc_pool_destroy(fc_pool_t *pool);
  * chunk_sizes[chunk]), never a partial page-aligned fragment of it, even
  * when several chunks are resolved together because they share a page.
  *
- * May be called concurrently from a background thread while the calling
- * application is running; it must not access the region itself (that
- * would deadlock), and should be safe to run off the main thread.
+ * Called synchronously, inline, on whichever thread first accesses the
+ * chunk -- from within the library's SIGSEGV handler, on that thread's
+ * own stack. It must not access any unresolved memory of any region
+ * (that would recursively fault and deadlock; nested/recursive faults
+ * are not yet supported) and should stick to simple, reentrant work,
+ * since it runs in a signal handler's context.
  */
 typedef void (*fc_init_chunk_fn_t)(uint32_t chunk, void *start, size_t size,
                                     void *user_data);

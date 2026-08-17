@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: MPL-2.0
 
 faultcache_lib = library('faultcache', 'faultcache.c', 'faultcache-server.c',
+  'faultcache-sigsegv.c',
   include_directories: inc,
   dependencies: [thread_dep],
   install: true)
@@ -18,4 +19,4 @@ pkg = import('pkgconfig')
 pkg.generate(faultcache_lib,
   name: 'faultcache',
   filebase: 'faultcache',
-  description: 'Userfaultfd-backed transparent cache for cheaply-derived memory content')
+  description: 'Transparent lazy-loading memory cache for cheaply-derived content')

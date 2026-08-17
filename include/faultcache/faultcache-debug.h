@@ -21,7 +21,7 @@ extern "C" {
 struct fc_region_debug_stats {
     uint32_t nchunks;         /* total chunks in the region */
     uint32_t chunks_resolved; /* chunks initialized so far */
-    uint32_t faults_handled;  /* UFFDIO_COPY commits done so far */
+    uint32_t faults_handled;  /* resolve passes (mremap installs) done so far */
 };
 
 /*

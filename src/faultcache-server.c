@@ -87,10 +87,11 @@ static uint32_t find_chunk(const struct fc_server_region *r, size_t off) {
     return lo;
 }
 
-/* Mirrors resolve_fault() in faultcache.c -- see the comment there for why
- * pages that straddle chunk boundaries are resolved as a group. Unlike
- * that one, the resolved content is cached in `r->content` rather than a
- * throwaway buffer, since other mappings of the same region may need it. */
+/* Mirrors resolve_fault_locked() in faultcache-sigsegv.c -- see the comment
+ * there for why pages that straddle chunk boundaries are resolved as a
+ * group. Unlike that one, the resolved content is cached in `r->content`
+ * rather than a throwaway buffer, since other mappings of the same region
+ * may need it. */
 static void resolve_fault(struct fc_server *server, struct fc_server_region *r,
                            struct fc_server_mapping *m, size_t fault_off) {
     uint32_t c0 = find_chunk(r, fault_off);
