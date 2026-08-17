@@ -2,7 +2,9 @@
 # SPDX-License-Identifier: MPL-2.0
 
 test_names = ['test_basic', 'test_multi_chunk', 'test_boundary',
-              'test_readonly', 'test_unmap']
+              'test_readonly', 'test_unmap', 'test_remote',
+              'test_remote_shared', 'test_remote_destroy',
+              'test_remote_reject']
 
 foreach t : test_names
   exe = executable(t, t + '.c',

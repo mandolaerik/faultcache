@@ -25,13 +25,13 @@ struct fc_region_debug_stats {
 };
 
 /*
- * Fills *out with a snapshot of addr's current fault-handling state.
+ * Fills *out with a snapshot of region's current fault-handling state.
  * Never triggers a fault itself. Safe to call from any thread.
- * Returns 0 on success, -1 (errno = EINVAL) if addr is not a region
- * currently registered with pool.
+ * Returns 0 on success, -1 (errno = EINVAL) if region is not currently
+ * registered with pool.
  */
-int fc_region_debug_stats(fc_pool_t *pool, const void *addr,
-                           struct fc_region_debug_stats *out);
+int fc_region_debug_stats(fc_pool_t *pool, fc_region_t region,
+                                 struct fc_region_debug_stats *out);
 
 #ifdef __cplusplus
 }
