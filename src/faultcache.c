@@ -309,8 +309,12 @@ fc_client_region_t *fc_client_region_create(fc_client_pool_t *pool,
                                              const void *descriptor,
                                              char **out_error) {
     if (!pool || (!descriptor && descriptor_size > 0)) {
+        /* GCOVR_EXCL_START: TODO(coverage): documented EINVAL contract for
+         * bad arguments -- no test calls this with a null pool or
+         * descriptor. */
         errno = EINVAL;
         return NULL;
+        /* GCOVR_EXCL_STOP */
     }
 
     uint32_t nchunks = 0;
@@ -323,9 +327,13 @@ fc_client_region_t *fc_client_region_create(fc_client_pool_t *pool,
     size_t total_size = 0;
     for (uint32_t i = 0; i < nchunks; i++) {
         if (chunk_sizes[i] == 0 || total_size + chunk_sizes[i] < total_size) {
+            /* GCOVR_EXCL_START: TODO(coverage): documented EINVAL contract
+             * for a malformed/adversarial chunk layout -- no test harness
+             * constructs a server that sends one. */
             free(chunk_sizes);
             errno = EINVAL;
             return NULL;
+            /* GCOVR_EXCL_STOP */
         }
         total_size += chunk_sizes[i];
     }

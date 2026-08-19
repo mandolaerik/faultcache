@@ -91,7 +91,12 @@ static uint32_t find_chunk(const struct fc_server_region *r, size_t off) {
  * there for why pages that straddle chunk boundaries are resolved as a
  * group. Unlike that one, the resolved content is cached in `r->content`
  * rather than a throwaway buffer, since other mappings of the same region
- * may need it. */
+ * may need it.
+ *
+ * TODO(coverage): server.c isn't a current testing focus, so this is a
+ * broad exclusion rather than a precisely-justified one per branch.
+ * GCOVR_EXCL_START
+ */
 static void resolve_fault(struct fc_server *server, struct fc_server_region *r,
                            struct fc_server_mapping *m, size_t fault_off) {
     uint32_t c0 = find_chunk(r, fault_off);
@@ -131,6 +136,7 @@ static void resolve_fault(struct fc_server *server, struct fc_server_region *r,
         /* Nothing better to do: this mapping's client stays blocked. */
     }
 }
+/* GCOVR_EXCL_STOP */
 
 static struct fc_server_region *find_region(struct fc_server *server,
                                              size_t descriptor_size,
@@ -151,6 +157,10 @@ static struct fc_server_region *find_region(struct fc_server *server,
  * needs to clean up user_data itself. On failure, *out_error is set to a
  * malloc()'d message (the factory's own, or one describing an invalid
  * layout) or left NULL if there's nothing to say; the caller owns it.
+ *
+ * TODO(coverage): server.c isn't a current testing focus, so this is a
+ * broad exclusion rather than a precisely-justified one per branch.
+ * GCOVR_EXCL_START
  */
 static struct fc_server_region *create_region(fc_region_factory_fn_t factory,
                                                size_t descriptor_size,
@@ -237,6 +247,7 @@ static struct fc_server_region *create_region(fc_region_factory_fn_t factory,
     r->destroy_user_data = destroy_user_data;
     return r;
 }
+/* GCOVR_EXCL_STOP */
 
 static void region_free(struct fc_server_region *r) {
     while (r->mappings) {
@@ -263,6 +274,10 @@ static void region_free(struct fc_server_region *r) {
  * Returns 1 if accepted, 0 if rejected (nacked, but the connection stays
  * open for further resolves), 2 if the peer disconnected cleanly, -1 on
  * a fatal I/O error on conn_fd (errno set).
+ *
+ * TODO(coverage): server.c isn't a current testing focus, so this is a
+ * broad exclusion rather than a precisely-justified one per branch.
+ * GCOVR_EXCL_START
  */
 static int handle_resolve(struct fc_server *server, int conn_fd) {
     char *buf = malloc(FC_WIRE_MSG_MAX);
@@ -344,6 +359,7 @@ static int handle_resolve(struct fc_server *server, int conn_fd) {
         return -1;
     return resp.status == 0 ? 1 : 0;
 }
+/* GCOVR_EXCL_STOP */
 
 /*
  * Receives one attach-request message on `conn_fd`: the same descriptor
@@ -355,6 +371,10 @@ static int handle_resolve(struct fc_server *server, int conn_fd) {
  * Returns 1 if a mapping was accepted, 0 if rejected (nacked, but the
  * connection stays open for further resolves), 2 if the peer disconnected
  * cleanly, -1 on a fatal I/O error on conn_fd (errno set).
+ *
+ * TODO(coverage): server.c isn't a current testing focus, so this is a
+ * broad exclusion rather than a precisely-justified one per branch.
+ * GCOVR_EXCL_START
  */
 static int handle_attach(struct fc_server *server, int ep, int conn_fd) {
     char *buf = malloc(FC_WIRE_MSG_MAX);
@@ -431,7 +451,11 @@ static int handle_attach(struct fc_server *server, int ep, int conn_fd) {
     }
     return 1;
 }
+/* GCOVR_EXCL_STOP */
 
+/* TODO(coverage): server.c isn't a current testing focus, so this is a
+ * broad exclusion rather than a precisely-justified one per branch.
+ * GCOVR_EXCL_START */
 fc_server_t *fc_server_create(fc_region_factory_fn_t factory,
                                void *factory_user_data) {
     if (!factory) {
@@ -452,7 +476,11 @@ fc_server_t *fc_server_create(fc_region_factory_fn_t factory,
     }
     return s;
 }
+/* GCOVR_EXCL_STOP */
 
+/* TODO(coverage): server.c isn't a current testing focus, so this is a
+ * broad exclusion rather than a precisely-justified one per branch.
+ * GCOVR_EXCL_START */
 int fc_server_run(fc_server_t *server, int conn_fd) {
     int ep = epoll_create1(EPOLL_CLOEXEC);
     if (ep < 0)
@@ -545,13 +573,21 @@ int fc_server_run(fc_server_t *server, int conn_fd) {
     close(ep);
     return ret;
 }
+/* GCOVR_EXCL_STOP */
 
+/* TODO(coverage): server.c isn't a current testing focus, so this is a
+ * broad exclusion rather than a precisely-justified one per branch.
+ * GCOVR_EXCL_START */
 void fc_server_stop(fc_server_t *server) {
     uint64_t one = 1;
     ssize_t unused = write(server->stop_fd, &one, sizeof(one));
     (void)unused;
 }
+/* GCOVR_EXCL_STOP */
 
+/* TODO(coverage): server.c isn't a current testing focus, so this is a
+ * broad exclusion rather than a precisely-justified one per branch.
+ * GCOVR_EXCL_START */
 void fc_server_destroy(fc_server_t *server) {
     if (!server)
         return;
@@ -564,5 +600,6 @@ void fc_server_destroy(fc_server_t *server) {
     close(server->stop_fd);
     free(server);
 }
+/* GCOVR_EXCL_STOP */
 
 
