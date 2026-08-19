@@ -14,6 +14,7 @@
 #include <linux/userfaultfd.h>
 #include <pthread.h>
 #include <stdbool.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
@@ -27,15 +28,30 @@
 #define UFFD_USER_MODE_ONLY 1
 #endif
 
+/* See fc_misuse() in faultcache-sigsegv.c for the rationale: a bad
+ * handle is a caller bug, not a recoverable runtime condition. */
+static void fc_misuse(const char *what) {
+    fprintf(stderr, "faultcache: misuse: %s\n", what);
+    abort();
+}
+
 /*
  * The client half of the client/server split (see
  * faultcache-client.h): resolution happens in a separate server
  * process, reached via UFFDIO_COPY over the uffd fd handed off at
  * creation time -- unlike fc_pool_t (src/faultcache-sigsegv.c), a
  * client region has no local handler thread of its own.
+ *
+ * Tracked by its owning pool in an intrusive circular doubly-linked
+ * list with a sentinel node (fc_pool_impl.regions itself, see below),
+ * so fc_client_region_destroy() can unlink in O(1) given the handle
+ * directly -- no scan by address needed, unlike the old const-void*
+ * handle scheme.
  */
 struct fc_client_region {
     struct fc_client_region *next;
+    struct fc_client_region *prev;
+    struct fc_pool_impl *pool; /* owning pool, needed to find its lock */
 
     void *base;
     size_t total_size;  /* exact sum(chunk_sizes), reported by *_region_size() */
@@ -50,11 +66,29 @@ struct fc_client_region {
     int uffd;
 };
 
-/* Region-tracking bookkeeping for fc_client_pool_t: a mutex plus a
- * linked list of regions. */
+/* Inserts `r` right after sentinel/list-head `head` -- O(1). */
+static void client_region_list_insert(struct fc_client_region *head,
+                                       struct fc_client_region *r) {
+    r->next = head->next;
+    r->prev = head;
+    head->next->prev = r;
+    head->next = r;
+}
+
+/* Unlinks `r` from whatever list it's in -- O(1), no head needed. */
+static void client_region_list_remove(struct fc_client_region *r) {
+    r->next->prev = r->prev;
+    r->prev->next = r->next;
+}
+
+/* Region-tracking bookkeeping for fc_client_pool_t: a mutex plus the
+ * sentinel node of an intrusive circular doubly-linked region list --
+ * only .next/.prev are ever used on `regions` itself. Real regions run
+ * from regions.next around to regions.prev; an empty pool has both
+ * pointing back at &regions. */
 struct fc_pool_impl {
     pthread_mutex_t lock;
-    struct fc_client_region *regions;
+    struct fc_client_region regions;
 };
 
 struct fc_client_pool {
@@ -63,15 +97,15 @@ struct fc_client_pool {
 
 static void pool_impl_init(struct fc_pool_impl *impl) {
     pthread_mutex_init(&impl->lock, NULL);
-    impl->regions = NULL;
+    impl->regions.next = impl->regions.prev = &impl->regions;
 }
 
 static void region_teardown(struct fc_client_region *r);
 
 static void pool_impl_teardown(struct fc_pool_impl *impl) {
-    while (impl->regions) {
-        struct fc_client_region *r = impl->regions;
-        impl->regions = r->next;
+    while (impl->regions.next != &impl->regions) {
+        struct fc_client_region *r = impl->regions.next;
+        client_region_list_remove(r);
         region_teardown(r);
     }
     pthread_mutex_destroy(&impl->lock);
@@ -102,35 +136,19 @@ void fc_client_pool_destroy(fc_client_pool_t *pool) {
 }
 
 static void pool_add(struct fc_pool_impl *pool, struct fc_client_region *r) {
+    r->pool = pool;
     pthread_mutex_lock(&pool->lock);
-    r->next = pool->regions;
-    pool->regions = r;
+    client_region_list_insert(&pool->regions, r);
     pthread_mutex_unlock(&pool->lock);
 }
 
-static struct fc_client_region *pool_remove(struct fc_pool_impl *pool, const void *addr) {
+/* `region` must be a live handle -- not validated (see
+ * fc_client_region_destroy()'s doc comment). */
+static void pool_remove(struct fc_client_region *region) {
+    struct fc_pool_impl *pool = region->pool;
     pthread_mutex_lock(&pool->lock);
-    struct fc_client_region **p = &pool->regions;
-    while (*p) {
-        if ((*p)->base == addr) {
-            struct fc_client_region *found = *p;
-            *p = found->next;
-            pthread_mutex_unlock(&pool->lock);
-            return found;
-        }
-        p = &(*p)->next;
-    }
+    client_region_list_remove(region);
     pthread_mutex_unlock(&pool->lock);
-    return NULL;
-}
-
-static struct fc_client_region *pool_find(struct fc_pool_impl *pool, const void *addr) {
-    pthread_mutex_lock(&pool->lock);
-    struct fc_client_region *r = pool->regions;
-    while (r && r->base != addr)
-        r = r->next;
-    pthread_mutex_unlock(&pool->lock);
-    return r;
 }
 
 static size_t page_floor(size_t x, size_t page_size) {
@@ -295,11 +313,11 @@ static int send_attach(int server_fd, int uffd, const void *base,
     return 0;
 }
 
-fc_client_region_t fc_client_region_create(fc_client_pool_t *pool,
-                                            int server_fd,
-                                            size_t descriptor_size,
-                                            const void *descriptor,
-                                            char **out_error) {
+fc_client_region_t *fc_client_region_create(fc_client_pool_t *pool,
+                                             int server_fd,
+                                             size_t descriptor_size,
+                                             const void *descriptor,
+                                             char **out_error) {
     if (!pool || (!descriptor && descriptor_size > 0)) {
         errno = EINVAL;
         return NULL;
@@ -387,7 +405,7 @@ fc_client_region_t fc_client_region_create(fc_client_pool_t *pool,
     }
 
     pool_add(&pool->impl, r);
-    return r->base;
+    return r;
 
 fail_uffd:
     close(r->uffd);
@@ -405,25 +423,17 @@ fail_alloc: {
 }
 }
 
-int fc_client_region_destroy(fc_client_pool_t *pool,
-                              fc_client_region_t region) {
-    if (!pool) {
-        errno = EINVAL;
-        return -1;
-    }
-    struct fc_client_region *r = pool_remove(&pool->impl, region);
-    if (!r) {
-        errno = EINVAL;
-        return -1;
-    }
-    region_teardown(r);
-    return 0;
+void fc_client_region_destroy(fc_client_region_t *region) {
+    if (!region)
+        fc_misuse("fc_client_region_destroy: NULL region");
+    pool_remove(region);
+    region_teardown(region);
 }
 
-size_t fc_client_region_size(fc_client_pool_t *pool,
-                              fc_client_region_t region) {
-    if (!pool)
-        return 0;
-    struct fc_client_region *r = pool_find(&pool->impl, region);
-    return r ? r->total_size : 0;
+const void *fc_client_region_base(const fc_client_region_t *region) {
+    return region ? region->base : NULL;
+}
+
+size_t fc_client_region_size(const fc_client_region_t *region) {
+    return region ? region->total_size : 0;
 }

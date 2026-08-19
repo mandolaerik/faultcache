@@ -62,7 +62,7 @@ static char *factory(size_t descriptor_size, const void *descriptor,
     out_layout->nchunks = NCHUNKS;
     out_layout->chunk_sizes = sizes;
     out_layout->init_chunk = fill_chunk;
-    out_layout->init_chunk_user_data = ctx;
+    out_layout->region_user_data = ctx;
     out_layout->destroy_user_data = destroy_user_data;
     return NULL;
 }
@@ -93,15 +93,15 @@ int main(void) {
     CHECK(pool != NULL);
 
     uint8_t descriptor = 0x7C;
-    const void *addr = fc_client_region_create(pool, sv[0], sizeof(descriptor),
-                                                &descriptor, NULL);
-    CHECK(addr != NULL);
+    fc_client_region_t *region = fc_client_region_create(
+        pool, sv[0], sizeof(descriptor), &descriptor, NULL);
+    CHECK(region != NULL);
 
-    const uint8_t *bytes = addr;
+    const uint8_t *bytes = fc_client_region_base(region);
     for (size_t i = 0; i < NCHUNKS * CHUNK_SIZE; i++)
         CHECK(bytes[i] == 0x7C);
 
-    CHECK(fc_client_region_destroy(pool, addr) == 0);
+    fc_client_region_destroy(region);
     fc_client_pool_destroy(pool);
 
     close(sv[0]); /* server thread sees EOF, fc_server_run() returns */

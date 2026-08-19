@@ -51,7 +51,7 @@ struct fc_server_region {
 
     fc_init_chunk_fn_t init_chunk;
     void *user_data;
-    fc_region_destroy_fn_t destroy_user_data; /* may be NULL */
+    void (*destroy_user_data)(void *user_data); /* may be NULL */
 
     struct fc_server_mapping *mappings;
 };
@@ -169,8 +169,8 @@ static struct fc_server_region *create_region(fc_region_factory_fn_t factory,
     uint32_t nchunks = layout.nchunks;
     size_t *chunk_sizes = layout.chunk_sizes;
     fc_init_chunk_fn_t init_chunk = layout.init_chunk;
-    void *user_data = layout.init_chunk_user_data;
-    fc_region_destroy_fn_t destroy_user_data = layout.destroy_user_data;
+    void *user_data = layout.region_user_data;
+    void (*destroy_user_data)(void *) = layout.destroy_user_data;
 
     bool layout_ok = nchunks > 0 && chunk_sizes && init_chunk;
     size_t acc = 0;

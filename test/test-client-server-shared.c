@@ -52,7 +52,7 @@ static char *factory(size_t descriptor_size, const void *descriptor,
     out_layout->nchunks = NCHUNKS;
     out_layout->chunk_sizes = sizes;
     out_layout->init_chunk = fill_chunk;
-    out_layout->init_chunk_user_data =
+    out_layout->region_user_data =
         (void *)(uintptr_t) * (const uint8_t *)descriptor;
     out_layout->destroy_user_data = NULL;
     return NULL;
@@ -112,24 +112,24 @@ int main(void) {
 
     uint8_t descriptor = 0x42; /* same descriptor on both connections */
 
-    const void *addr_a = fc_client_region_create(pool, svA[0], sizeof(descriptor),
-                                                  &descriptor, NULL);
-    CHECK(addr_a != NULL);
-    const void *addr_b = fc_client_region_create(pool, svB[0], sizeof(descriptor),
-                                                  &descriptor, NULL);
-    CHECK(addr_b != NULL);
-    CHECK(addr_a != addr_b); /* distinct client-side mappings */
+    fc_client_region_t *region_a = fc_client_region_create(
+        pool, svA[0], sizeof(descriptor), &descriptor, NULL);
+    CHECK(region_a != NULL);
+    fc_client_region_t *region_b = fc_client_region_create(
+        pool, svB[0], sizeof(descriptor), &descriptor, NULL);
+    CHECK(region_b != NULL);
+    CHECK(region_a != region_b); /* distinct client-side mappings */
 
-    const uint8_t *bytes_a = addr_a;
+    const uint8_t *bytes_a = fc_client_region_base(region_a);
     for (size_t i = 0; i < NCHUNKS * CHUNK_SIZE; i++)
         CHECK(bytes_a[i] == 0x42);
 
-    const uint8_t *bytes_b = addr_b;
+    const uint8_t *bytes_b = fc_client_region_base(region_b);
     for (size_t i = 0; i < NCHUNKS * CHUNK_SIZE; i++)
         CHECK(bytes_b[i] == 0x42);
 
-    CHECK(fc_client_region_destroy(pool, addr_a) == 0);
-    CHECK(fc_client_region_destroy(pool, addr_b) == 0);
+    fc_client_region_destroy(region_a);
+    fc_client_region_destroy(region_b);
     fc_client_pool_destroy(pool);
 
     close(svA[0]);

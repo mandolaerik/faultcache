@@ -56,9 +56,9 @@ int main(void) {
 
     uint8_t descriptor = 0xFF;
     char *error = NULL;
-    const void *addr = fc_client_region_create(pool, sv[0], sizeof(descriptor),
-                                                &descriptor, &error);
-    CHECK(addr == NULL);
+    fc_client_region_t *region = fc_client_region_create(
+        pool, sv[0], sizeof(descriptor), &descriptor, &error);
+    CHECK(region == NULL);
     CHECK(errno == ECONNREFUSED);
     CHECK(error != NULL);
     CHECK(strcmp(error, "descriptor rejected: unknown fill value") == 0);

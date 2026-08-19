@@ -66,9 +66,12 @@ fc_client_pool_t *fc_client_pool_create(void);
 /* Destroys the pool, tearing down any regions still alive within it. */
 void fc_client_pool_destroy(fc_client_pool_t *pool);
 
-/* A region's base address, as returned by fc_client_region_create(). Just
- * a `const void *` in disguise -- may be dereferenced/read directly. */
-typedef const void *fc_client_region_t;
+/* Opaque handle to a region created by fc_client_region_create(), tracked
+ * by its owning pool in an intrusive doubly-linked list (see
+ * src/faultcache.c) so fc_client_region_destroy() is O(1). Not a
+ * pointer to the region's own memory -- use fc_client_region_base() for
+ * that. */
+typedef struct fc_client_region fc_client_region_t;
 
 /*
  * Reserve a region whose chunk layout and content are entirely decided
@@ -90,27 +93,37 @@ typedef const void *fc_client_region_t;
  * see fc_region_factory_fn_t in faultcache-server.h) that the caller
  * must free(). Pass NULL if uninterested.
  *
- * The returned pointer must be released with fc_client_region_destroy(),
- * passing the same pool.
+ * Returns an opaque handle on success, which must be released with
+ * fc_client_region_destroy(). Use fc_client_region_base() to get the
+ * mapping's base address.
  */
-fc_client_region_t fc_client_region_create(fc_client_pool_t *pool,
-                                            int server_fd,
-                                            size_t descriptor_size,
-                                            const void *descriptor,
-                                            char **out_error);
+fc_client_region_t *fc_client_region_create(fc_client_pool_t *pool,
+                                             int server_fd,
+                                             size_t descriptor_size,
+                                             const void *descriptor,
+                                             char **out_error);
 
 /*
- * Release a mapping previously returned by fc_client_region_create() on
- * `pool`. Returns 0 on success, -1 on failure (errno is set).
+ * Release a mapping previously returned by fc_client_region_create().
+ * `region` must not be used again afterwards (including passing it to
+ * fc_client_region_base()/fc_client_region_size()): it is freed by this
+ * call.
+ *
+ * `region` must be a valid, live handle -- passing NULL (or reusing an
+ * already-destroyed handle) is a caller bug, not a recoverable error,
+ * and aborts the process.
  */
-int fc_client_region_destroy(fc_client_pool_t *pool,
-                              fc_client_region_t region);
+void fc_client_region_destroy(fc_client_region_t *region);
+
+/* The region's mapped base address (of total size
+ * fc_client_region_size() bytes) -- may be dereferenced/read directly;
+ * writes fault fatally. Valid for as long as `region` itself is (i.e.
+ * until fc_client_region_destroy()). */
+const void *fc_client_region_base(const fc_client_region_t *region);
 
 /* Total size in bytes of a mapping previously returned by
- * fc_client_region_create() on `pool`, or 0 if `region` is not a live
- * region of that pool. */
-size_t fc_client_region_size(fc_client_pool_t *pool,
-                              fc_client_region_t region);
+ * fc_client_region_create(). */
+size_t fc_client_region_size(const fc_client_region_t *region);
 
 #ifdef __cplusplus
 }
