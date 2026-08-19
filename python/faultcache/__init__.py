@@ -67,10 +67,13 @@ _lib.fc_region_create.argtypes = [
 ]
 _lib.fc_region_create.restype = ctypes.c_void_p
 
-_lib.fc_region_destroy.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
-_lib.fc_region_destroy.restype = ctypes.c_int
+_lib.fc_region_base.argtypes = [ctypes.c_void_p]
+_lib.fc_region_base.restype = ctypes.c_void_p
 
-_lib.fc_region_size.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+_lib.fc_region_destroy.argtypes = [ctypes.c_void_p]
+_lib.fc_region_destroy.restype = None
+
+_lib.fc_region_size.argtypes = [ctypes.c_void_p]
 _lib.fc_region_size.restype = ctypes.c_size_t
 
 
@@ -83,9 +86,9 @@ class _CDebugStats(ctypes.Structure):
 
 
 _lib.fc_region_debug_stats.argtypes = [
-    ctypes.c_void_p, ctypes.c_void_p, ctypes.POINTER(_CDebugStats)
+    ctypes.c_void_p, ctypes.POINTER(_CDebugStats)
 ]
-_lib.fc_region_debug_stats.restype = ctypes.c_int
+_lib.fc_region_debug_stats.restype = None
 
 _libc = ctypes.CDLL(None, use_errno=True)
 _libc.memcpy.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_size_t]
@@ -130,20 +133,21 @@ class Region:
         # alive on the C side, only the CFUNCTYPE wrapper object matters.
         self._cb = _InitChunkFn(trampoline)
 
-        addr = _lib.fc_region_create(pool._handle, n, sizes_arr, self._cb, None)
-        if not addr:
+        region = _lib.fc_region_create(pool._handle, n, sizes_arr, self._cb, None)
+        if not region:
             errno = ctypes.get_errno()
             raise OSError(errno, os.strerror(errno))
 
         self._pool = pool
-        self._addr: Optional[int] = addr
-        self._size = _lib.fc_region_size(pool._handle, addr)
+        self._region: Optional[int] = region  # opaque fc_region_t*, not an address
+        self._addr: Optional[int] = _lib.fc_region_base(region)
+        self._size = _lib.fc_region_size(region)
         self._view_count = 0
         pool._regions.add(self)
 
     @property
     def closed(self) -> bool:
-        return self._addr is None
+        return self._region is None
 
     def debug_stats(self) -> DebugStats:
         """Snapshot of resolved-chunk/fault counters straight from the C
@@ -152,11 +156,7 @@ class Region:
         if self._addr is None:
             raise ValueError("Region is closed")
         stats = _CDebugStats()
-        rc = _lib.fc_region_debug_stats(self._pool._handle, self._addr,
-                                         ctypes.byref(stats))
-        if rc != 0:
-            errno = ctypes.get_errno()
-            raise OSError(errno, os.strerror(errno))
+        _lib.fc_region_debug_stats(self._region, ctypes.byref(stats))
         return DebugStats(stats.nchunks, stats.chunks_resolved,
                            stats.faults_handled)
 
@@ -217,8 +217,9 @@ class Region:
                 f"cannot close Region: {self._view_count} outstanding "
                 "view() result(s)"
             )
-        if self._pool._handle is not None:
-            _lib.fc_region_destroy(self._pool._handle, self._addr)
+        if not self._pool.closed:
+            _lib.fc_region_destroy(self._region)
+        self._region = None
         self._addr = None
         self._size = 0
 

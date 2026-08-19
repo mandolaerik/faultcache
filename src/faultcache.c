@@ -34,8 +34,8 @@
  * creation time -- unlike fc_pool_t (src/faultcache-sigsegv.c), a
  * client region has no local handler thread of its own.
  */
-struct fc_region {
-    struct fc_region *next;
+struct fc_client_region {
+    struct fc_client_region *next;
 
     void *base;
     size_t total_size;  /* exact sum(chunk_sizes), reported by *_region_size() */
@@ -54,7 +54,7 @@ struct fc_region {
  * linked list of regions. */
 struct fc_pool_impl {
     pthread_mutex_t lock;
-    struct fc_region *regions;
+    struct fc_client_region *regions;
 };
 
 struct fc_client_pool {
@@ -66,11 +66,11 @@ static void pool_impl_init(struct fc_pool_impl *impl) {
     impl->regions = NULL;
 }
 
-static void region_teardown(struct fc_region *r);
+static void region_teardown(struct fc_client_region *r);
 
 static void pool_impl_teardown(struct fc_pool_impl *impl) {
     while (impl->regions) {
-        struct fc_region *r = impl->regions;
+        struct fc_client_region *r = impl->regions;
         impl->regions = r->next;
         region_teardown(r);
     }
@@ -85,7 +85,7 @@ fc_client_pool_t *fc_client_pool_create(void) {
     return pool;
 }
 
-static void region_teardown(struct fc_region *r) {
+static void region_teardown(struct fc_client_region *r) {
     close(r->uffd); /* implicitly unregisters the range */
     munmap(r->base, r->mapped_size);
     close(r->memfd);
@@ -101,19 +101,19 @@ void fc_client_pool_destroy(fc_client_pool_t *pool) {
     free(pool);
 }
 
-static void pool_add(struct fc_pool_impl *pool, struct fc_region *r) {
+static void pool_add(struct fc_pool_impl *pool, struct fc_client_region *r) {
     pthread_mutex_lock(&pool->lock);
     r->next = pool->regions;
     pool->regions = r;
     pthread_mutex_unlock(&pool->lock);
 }
 
-static struct fc_region *pool_remove(struct fc_pool_impl *pool, const void *addr) {
+static struct fc_client_region *pool_remove(struct fc_pool_impl *pool, const void *addr) {
     pthread_mutex_lock(&pool->lock);
-    struct fc_region **p = &pool->regions;
+    struct fc_client_region **p = &pool->regions;
     while (*p) {
         if ((*p)->base == addr) {
-            struct fc_region *found = *p;
+            struct fc_client_region *found = *p;
             *p = found->next;
             pthread_mutex_unlock(&pool->lock);
             return found;
@@ -124,9 +124,9 @@ static struct fc_region *pool_remove(struct fc_pool_impl *pool, const void *addr
     return NULL;
 }
 
-static struct fc_region *pool_find(struct fc_pool_impl *pool, const void *addr) {
+static struct fc_client_region *pool_find(struct fc_pool_impl *pool, const void *addr) {
     pthread_mutex_lock(&pool->lock);
-    struct fc_region *r = pool->regions;
+    struct fc_client_region *r = pool->regions;
     while (r && r->base != addr)
         r = r->next;
     pthread_mutex_unlock(&pool->lock);
@@ -322,7 +322,7 @@ fc_client_region_t fc_client_region_create(fc_client_pool_t *pool,
         total_size += chunk_sizes[i];
     }
 
-    struct fc_region *r = calloc(1, sizeof(*r));
+    struct fc_client_region *r = calloc(1, sizeof(*r));
     if (!r) {
         free(chunk_sizes);
         return NULL;
@@ -411,7 +411,7 @@ int fc_client_region_destroy(fc_client_pool_t *pool,
         errno = EINVAL;
         return -1;
     }
-    struct fc_region *r = pool_remove(&pool->impl, region);
+    struct fc_client_region *r = pool_remove(&pool->impl, region);
     if (!r) {
         errno = EINVAL;
         return -1;
@@ -424,6 +424,6 @@ size_t fc_client_region_size(fc_client_pool_t *pool,
                               fc_client_region_t region) {
     if (!pool)
         return 0;
-    struct fc_region *r = pool_find(&pool->impl, region);
+    struct fc_client_region *r = pool_find(&pool->impl, region);
     return r ? r->total_size : 0;
 }

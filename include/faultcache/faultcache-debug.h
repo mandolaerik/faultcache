@@ -27,11 +27,12 @@ struct fc_region_debug_stats {
 /*
  * Fills *out with a snapshot of region's current fault-handling state.
  * Never triggers a fault itself. Safe to call from any thread.
- * Returns 0 on success, -1 (errno = EINVAL) if region is not currently
- * registered with pool.
+ *
+ * `region` and `out` must be non-NULL -- violating that is a caller
+ * bug, not a recoverable error, and aborts the process.
  */
-int fc_region_debug_stats(fc_pool_t *pool, fc_region_t region,
-                                 struct fc_region_debug_stats *out);
+void fc_region_debug_stats(const fc_region_t *region,
+                           struct fc_region_debug_stats *out);
 
 #ifdef __cplusplus
 }

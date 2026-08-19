@@ -122,11 +122,12 @@ int main(int argc, char **argv) {
     for (uint32_t i = 0; i < fx.nchunks; i++)
         sizes[i] = (size_t)fx.chunks[i].uncompressed_size;
 
-    const void *base = fc_region_create(pool, fx.nchunks, sizes, init_chunk, &fx);
-    if (!base) {
+    fc_region_t *region = fc_region_create(pool, fx.nchunks, sizes, init_chunk, &fx);
+    if (!region) {
         perror("fc_region_create");
         return 1;
     }
+    const void *base = fc_region_base(region);
 
     size_t *offsets = malloc(fx.nchunks * sizeof(size_t));
     offsets[0] = 0;
@@ -152,7 +153,7 @@ int main(int argc, char **argv) {
            "verified\n",
            fx.nchunks, offsets[fx.nchunks - 1] + sizes[fx.nchunks - 1]);
 
-    fc_region_destroy(pool, base);
+    fc_region_destroy(region);
     fc_pool_destroy(pool);
     free(sizes);
     free(offsets);

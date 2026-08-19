@@ -24,11 +24,11 @@ int main(void) {
     CHECK(pool != NULL);
 
     size_t sizes[] = {4096 * 3 + 17};
-    const void *base = fc_region_create(pool, 1, sizes, init_chunk, NULL);
-    CHECK(base != NULL);
-    CHECK(fc_region_size(pool, base) == sizes[0]);
+    fc_region_t *region = fc_region_create(pool, 1, sizes, init_chunk, NULL);
+    CHECK(region != NULL);
+    CHECK(fc_region_size(region) == sizes[0]);
 
-    const unsigned char *p = base;
+    const unsigned char *p = fc_region_base(region);
     CHECK(p[0] == 'A');
     CHECK(p[sizes[0] - 1] == 'A');
     CHECK(p[4096] == 'A'); /* second page, still the same chunk */
@@ -38,7 +38,7 @@ int main(void) {
     CHECK(p[10] == 'A');
     CHECK(init_count == 1);
 
-    CHECK(fc_region_destroy(pool, base) == 0);
+    fc_region_destroy(region);
     fc_pool_destroy(pool);
     return 0;
 }

@@ -24,15 +24,15 @@ int main(void) {
 
     size_t page = 4096;
     size_t sizes[NCHUNKS] = {page, page * 2, page, page * 3, page};
-    const void *base = fc_region_create(pool, NCHUNKS, sizes, init_chunk, NULL);
-    CHECK(base != NULL);
+    fc_region_t *region = fc_region_create(pool, NCHUNKS, sizes, init_chunk, NULL);
+    CHECK(region != NULL);
 
     size_t offsets[NCHUNKS];
     offsets[0] = 0;
     for (int i = 1; i < NCHUNKS; i++)
         offsets[i] = offsets[i - 1] + sizes[i - 1];
 
-    const unsigned char *p = base;
+    const unsigned char *p = fc_region_base(region);
 
     /* Touching one chunk must not touch any other (all chunks here are
      * page-aligned, so there is no sharing between them). */
@@ -54,7 +54,7 @@ int main(void) {
         CHECK(p[offsets[3] + i] == 'd');
     CHECK(counts[3] == 1);
 
-    CHECK(fc_region_destroy(pool, base) == 0);
+    fc_region_destroy(region);
     fc_pool_destroy(pool);
     return 0;
 }

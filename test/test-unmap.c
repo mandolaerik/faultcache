@@ -22,13 +22,17 @@ int main(void) {
     CHECK(pool != NULL);
 
     size_t sizes[] = {4096, 8192};
-    const void *base = fc_region_create(pool, 2, sizes, init_chunk, NULL);
-    CHECK(base != NULL);
-    CHECK(fc_region_size(pool, base) == 4096 + 8192);
+    fc_region_t *region = fc_region_create(pool, 2, sizes, init_chunk, NULL);
+    CHECK(region != NULL);
+    CHECK(fc_region_size(region) == 4096 + 8192);
+    const void *base = fc_region_base(region);
     CHECK(((const unsigned char *)base)[0] == 'Z');
 
-    CHECK(fc_region_destroy(pool, base) == 0);
-    CHECK(fc_region_size(pool, base) == 0);
+    /* region is freed by this call; querying it afterwards isn't
+     * possible any more (it's an opaque handle, not an address to look
+     * up) -- the fork()+access below is what actually proves the
+     * mapping is gone. */
+    fc_region_destroy(region);
 
     pid_t pid = fork();
     CHECK(pid >= 0);

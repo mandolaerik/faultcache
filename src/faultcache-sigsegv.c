@@ -28,12 +28,40 @@
 #include <signal.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <sys/mman.h>
 #include <unistd.h>
 
+/*
+ * Argument/precondition violations (bad pointers, wrong nchunks, a
+ * destroyed handle reused) are bugs in the CALLER, never a legitimate
+ * runtime condition for correctly-written code -- checking a return
+ * value for them would be pure cargo-culting since it never trips on
+ * correct code, so real misuse would go uncaught. abort() instead of
+ * returning a soft, easily-ignored error code. Contrast with genuine
+ * resource failures (malloc()/mmap() running out), which CAN happen to
+ * correct code and still return NULL/errno from fc_region_create().
+ */
+static void fc_misuse(const char *what) {
+    fprintf(stderr, "faultcache: misuse: %s\n", what);
+    abort();
+}
+
+/*
+ * Also the public fc_region_t (see faultcache.h): the header only
+ * forward-declares the tag, this is its one true definition. `next`/
+ * `prev` link it into its owning pool's region list -- an intrusive
+ * circular doubly-linked list with a sentinel node (pool->regions
+ * itself, see struct fc_pool below), so insertion/removal never needs
+ * to special-case an empty list or the ends, and fc_region_destroy()
+ * can unlink in O(1) given the handle directly (no scan by address
+ * needed, unlike the fault path -- see find_region_locked()).
+ */
 struct fc_region {
     struct fc_region *next;
+    struct fc_region *prev;
+    struct fc_pool *pool; /* owning pool, needed to find its lock */
 
     void *base;
     size_t total_size;  /* exact sum(chunk_sizes), reported by fc_region_size() */
@@ -59,9 +87,28 @@ struct fc_pool {
      * rather than per-region/per-chunk), accepted for this first pass;
      * see TODO.md. */
     pthread_mutex_t lock;
-    struct fc_region *regions;
+    /* Sentinel node of the intrusive circular doubly-linked region
+     * list: only .next/.prev are ever used on this node itself (all
+     * other fields stay zeroed and untouched). Real regions run from
+     * regions.next around to regions.prev; an empty pool has both
+     * pointing back at &regions. */
+    struct fc_region regions;
     struct fc_pool *next_pool; /* guarded by g_pools_lock, not lock */
 };
+
+/* Inserts `r` right after sentinel/list-head `head` -- O(1). */
+static void region_list_insert(struct fc_region *head, struct fc_region *r) {
+    r->next = head->next;
+    r->prev = head;
+    head->next->prev = r;
+    head->next = r;
+}
+
+/* Unlinks `r` from whatever list it's in -- O(1), no head needed. */
+static void region_list_remove(struct fc_region *r) {
+    r->next->prev = r->prev;
+    r->prev->next = r->next;
+}
 
 /*
  * Process-wide registry of live pools, so the one process-wide SIGSEGV
@@ -163,9 +210,17 @@ static void resolve_fault_locked(struct fc_region *r, size_t fault_off) {
     r->faults_handled++;
 }
 
+/*
+ * Still a linear scan: the SIGSEGV handler only has a faulting address,
+ * not a region handle, so there's no way to avoid searching every
+ * region of every pool here regardless of the list's O(1)-removal
+ * shape (an interval tree would help if this ever shows up as hot;
+ * not needed yet -- see TODO.md).
+ */
 static struct fc_region *find_region_locked(struct fc_pool *pool,
                                              uintptr_t addr) {
-    for (struct fc_region *r = pool->regions; r; r = r->next) {
+    for (struct fc_region *r = pool->regions.next; r != &pool->regions;
+         r = r->next) {
         if (addr >= (uintptr_t)r->base &&
             addr < (uintptr_t)r->base + r->mapped_size)
             return r;
@@ -226,7 +281,7 @@ fc_pool_t *fc_pool_create(void) {
     if (!pool)
         return NULL;
     pthread_mutex_init(&pool->lock, NULL);
-    pool->regions = NULL;
+    pool->regions.next = pool->regions.prev = &pool->regions;
 
     pthread_mutex_lock(&g_pools_lock);
     pool->next_pool = g_pools;
@@ -254,22 +309,20 @@ void fc_pool_destroy(fc_pool_t *pool) {
         *p = pool->next_pool;
     pthread_mutex_unlock(&g_pools_lock);
 
-    while (pool->regions) {
-        struct fc_region *r = pool->regions;
-        pool->regions = r->next;
+    while (pool->regions.next != &pool->regions) {
+        struct fc_region *r = pool->regions.next;
+        region_list_remove(r);
         region_free(r);
     }
     pthread_mutex_destroy(&pool->lock);
     free(pool);
 }
 
-fc_region_t fc_region_create(fc_pool_t *pool, uint32_t nchunks,
-                              const size_t *chunk_sizes,
-                              fc_init_chunk_fn_t init_chunk, void *user_data) {
-    if (!pool || nchunks == 0 || !chunk_sizes || !init_chunk) {
-        errno = EINVAL;
-        return NULL;
-    }
+fc_region_t *fc_region_create(fc_pool_t *pool, uint32_t nchunks,
+                               const size_t *chunk_sizes,
+                               fc_init_chunk_fn_t init_chunk, void *user_data) {
+    if (!pool || nchunks == 0 || !chunk_sizes || !init_chunk)
+        fc_misuse("fc_region_create: invalid arguments");
 
     size_t total_size = 0;
     for (uint32_t i = 0; i < nchunks; i++) {
@@ -318,68 +371,48 @@ fc_region_t fc_region_create(fc_pool_t *pool, uint32_t nchunks,
         return NULL;
     }
 
+    r->pool = pool;
     pthread_mutex_lock(&pool->lock);
-    r->next = pool->regions;
-    pool->regions = r;
+    region_list_insert(&pool->regions, r);
     pthread_mutex_unlock(&pool->lock);
-    return r->base;
+    return r;
 }
 
-int fc_region_destroy(fc_pool_t *pool, fc_region_t region) {
-    if (!pool) {
-        errno = EINVAL;
-        return -1;
-    }
-
-    pthread_mutex_lock(&pool->lock);
-    struct fc_region **p = &pool->regions;
-    while (*p && (*p)->base != region)
-        p = &(*p)->next;
-    if (!*p) {
-        pthread_mutex_unlock(&pool->lock);
-        errno = EINVAL;
-        return -1;
-    }
-    struct fc_region *r = *p;
-    *p = r->next;
-    pthread_mutex_unlock(&pool->lock);
-
-    region_free(r);
-    return 0;
+const void *fc_region_base(const fc_region_t *region) {
+    if (!region)
+        fc_misuse("fc_region_base: NULL region");
+    return region->base;
 }
 
-size_t fc_region_size(fc_pool_t *pool, fc_region_t region) {
-    if (!pool)
-        return 0;
+void fc_region_destroy(fc_region_t *region) {
+    if (!region)
+        fc_misuse("fc_region_destroy: NULL region");
 
+    struct fc_pool *pool = region->pool;
     pthread_mutex_lock(&pool->lock);
-    struct fc_region *r = pool->regions;
-    while (r && r->base != region)
-        r = r->next;
-    size_t size = r ? r->total_size : 0;
+    region_list_remove(region);
     pthread_mutex_unlock(&pool->lock);
-    return size;
+
+    region_free(region);
 }
 
-int fc_region_debug_stats(fc_pool_t *pool, fc_region_t region,
+size_t fc_region_size(const fc_region_t *region) {
+    if (!region)
+        fc_misuse("fc_region_size: NULL region");
+    /* total_size is set once at creation, before the handle is ever
+     * published to a caller, and never changes again -- no lock needed. */
+    return region->total_size;
+}
+
+void fc_region_debug_stats(const fc_region_t *region,
                            struct fc_region_debug_stats *out) {
-    if (!pool || !out) {
-        errno = EINVAL;
-        return -1;
-    }
+    if (!region || !out)
+        fc_misuse("fc_region_debug_stats: NULL region or out");
 
+    struct fc_pool *pool = region->pool;
     pthread_mutex_lock(&pool->lock);
-    struct fc_region *r = pool->regions;
-    while (r && r->base != region)
-        r = r->next;
-    if (!r) {
-        pthread_mutex_unlock(&pool->lock);
-        errno = EINVAL;
-        return -1;
-    }
-    out->nchunks = r->nchunks;
-    out->chunks_resolved = r->chunks_resolved;
-    out->faults_handled = r->faults_handled;
+    out->nchunks = region->nchunks;
+    out->chunks_resolved = region->chunks_resolved;
+    out->faults_handled = region->faults_handled;
     pthread_mutex_unlock(&pool->lock);
-    return 0;
 }

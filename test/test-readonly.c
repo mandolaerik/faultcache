@@ -22,8 +22,9 @@ int main(void) {
     CHECK(pool != NULL);
 
     size_t sizes[] = {4096};
-    const void *base = fc_region_create(pool, 1, sizes, init_chunk, NULL);
-    CHECK(base != NULL);
+    fc_region_t *region = fc_region_create(pool, 1, sizes, init_chunk, NULL);
+    CHECK(region != NULL);
+    const void *base = fc_region_base(region);
     CHECK(((const unsigned char *)base)[0] == 'X');
 
     pid_t pid = fork();
@@ -38,7 +39,7 @@ int main(void) {
     CHECK(waitpid(pid, &status, 0) == pid);
     CHECK(WIFSIGNALED(status));
 
-    CHECK(fc_region_destroy(pool, base) == 0);
+    fc_region_destroy(region);
     fc_pool_destroy(pool);
     return 0;
 }

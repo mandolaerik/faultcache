@@ -48,9 +48,9 @@ int main(void) {
     CHECK(offsets[4] == 4096);
     CHECK(offsets[5] == 8222);
 
-    const void *base = fc_region_create(pool, NCHUNKS, sizes, init_chunk, NULL);
-    CHECK(base != NULL);
-    const unsigned char *p = base;
+    fc_region_t *region = fc_region_create(pool, NCHUNKS, sizes, init_chunk, NULL);
+    CHECK(region != NULL);
+    const unsigned char *p = fc_region_base(region);
 
     /* Touch chunk1: must resolve chunks 0-3 (sharing page 0) in one go,
      * and must NOT touch chunks 4-5. */
@@ -73,7 +73,7 @@ int main(void) {
         CHECK(counts[c] == 1);
     }
 
-    CHECK(fc_region_destroy(pool, base) == 0);
+    fc_region_destroy(region);
     fc_pool_destroy(pool);
     return 0;
 }

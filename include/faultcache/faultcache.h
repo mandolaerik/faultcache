@@ -67,39 +67,60 @@ void fc_pool_destroy(fc_pool_t *pool);
  * since it runs in a signal handler's context.
  */
 typedef void (*fc_init_chunk_fn_t)(uint32_t chunk, void *start, size_t size,
-                                    void *user_data);
+                                   const void *user_data);
 
-/* A region's base address, as returned by fc_region_create(). Just
- * a `const void *` in disguise -- may be dereferenced/read directly. */
-typedef const void *fc_region_t;
+/* Opaque handle to a region created by fc_region_create(), tracked by
+ * its owning pool in an intrusive doubly-linked list (see
+ * src/faultcache-sigsegv.c) so fc_region_destroy() is O(1). Not a
+ * pointer to the region's own memory -- use fc_region_base() for that. */
+typedef struct fc_region fc_region_t;
 
 /*
  * Reserve a read-only, lazily-populated address range made of `nchunks`
  * consecutive chunks whose sizes are given by chunk_sizes[0..nchunks-1],
  * tracked by `pool`.
  *
- * Returns the base address of the mapping (of total size
- * sum(chunk_sizes)) on success, or NULL on failure (errno is set).
+ * `pool`/`chunk_sizes`/`init_chunk` must be non-NULL and `nchunks` must
+ * be > 0 -- violating that is a caller bug, not a recoverable error,
+ * and aborts the process.
  *
- * The returned pointer must be released with fc_region_destroy(),
- * passing the same pool.
+ * Returns an opaque handle on success, or NULL on failure (errno is
+ * set) if chunk_sizes contains an invalid entry (zero, or one whose
+ * running total overflows) or a resource allocation (malloc()/mmap())
+ * fails -- both of these can happen even with correct calling code.
+ * Use fc_region_base() to get the mapping's base address (of total
+ * size sum(chunk_sizes)).
+ *
+ * The returned handle must be released with fc_region_destroy().
  */
-fc_region_t fc_region_create(fc_pool_t *pool,
-                                          uint32_t nchunks,
-                                          const size_t *chunk_sizes,
-                                          fc_init_chunk_fn_t init_chunk,
-                                          void *user_data);
+fc_region_t *fc_region_create(fc_pool_t *pool,
+                               uint32_t nchunks,
+                               const size_t *chunk_sizes,
+                               fc_init_chunk_fn_t init_chunk,
+                               void *user_data);
 
 /*
- * Release a mapping previously returned by fc_region_create() on
- * `pool`. Returns 0 on success, -1 on failure (errno is set).
+ * Release a mapping previously returned by fc_region_create(). `region`
+ * must not be used again afterwards (including passing it to
+ * fc_region_base()/fc_region_size()): it is freed by this call.
+ *
+ * `region` must be a valid, live handle -- passing NULL (or reusing an
+ * already-destroyed handle) is a caller bug, not a recoverable error,
+ * and aborts the process.
  */
-int fc_region_destroy(fc_pool_t *pool, fc_region_t region);
+void fc_region_destroy(fc_region_t *region);
 
 /* Total size in bytes of a mapping previously returned by
- * fc_region_create() on `pool`, or 0 if `region` is not a live
- * region of that pool. */
-size_t fc_region_size(fc_pool_t *pool, fc_region_t region);
+ * fc_region_create(). `region` must be a valid, live handle (see
+ * fc_region_destroy()). */
+size_t fc_region_size(const fc_region_t *region);
+
+/* The region's mapped base address (of total size fc_region_size()
+ * bytes) -- may be dereferenced/read directly; writes fault fatally.
+ * Valid for as long as `region` itself is (i.e. until
+ * fc_region_destroy()). `region` must be a valid, live handle. Never
+ * fails. */
+const void *fc_region_base(const fc_region_t *region);
 
 #ifdef __cplusplus
 }
