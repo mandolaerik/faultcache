@@ -204,11 +204,14 @@ static size_t *resolve_descriptor(int server_fd, size_t descriptor_size,
                                          (size_t)resp.nchunks * sizeof(uint64_t)
                  : (size_t)rd == sizeof(resp) + (size_t)resp.error_len;
     }
+    /* GCOVR_EXCL_START: a malformed/truncated reply needs a malicious or
+     * buggy server to trigger, not modeled by any test harness here. */
     if (!ok) {
         free(reply_buf);
         errno = ECONNREFUSED;
         return NULL;
     }
+    /* GCOVR_EXCL_STOP */
     if (resp.status != 0) {
         if (out_error && resp.error_len) {
             char *msg2 = malloc((size_t)resp.error_len + 1);
@@ -287,12 +290,16 @@ static int send_attach(int server_fd, int uffd, const void *base,
     free(msg);
     FC_ASSERT(sent >= 0);
 
+    /* GCOVR_EXCL_START: needs a server that accepts the resolve phase but
+     * rejects attach -- not modeled by any test harness here (fc_server_t
+     * currently never rejects at this phase). */
     uint8_t ack = 1;
     ssize_t rd = recv(server_fd, &ack, 1, 0);
     if (rd != 1 || ack != 0) {
         errno = ECONNREFUSED;
         return -1;
     }
+    /* GCOVR_EXCL_STOP */
     return 0;
 }
 

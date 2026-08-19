@@ -203,6 +203,15 @@ static void resolve_fault_locked(struct fc_region *r, size_t fault_off) {
  * shape (an interval tree would help if this ever shows up as hot;
  * not needed yet -- see TODO.md).
  */
+/*
+ * Tests exercise this (test_segv_passthrough in test-misuse.c) by
+ * forking and causing a genuine crash outside any region, but that
+ * child process necessarily terminates via a signal rather than a
+ * normal exit() -- gcov only flushes counters at normal exit, so the
+ * lines reached only from inside such a crash (this function, and the
+ * "not one of ours" tail of segv_handler() below) never show as
+ * covered despite genuinely running. GCOVR_EXCL_START
+ */
 static struct fc_region *find_region_locked(struct fc_pool *pool,
                                              uintptr_t addr) {
     for (struct fc_region *r = pool->regions.next; r != &pool->regions;
@@ -213,6 +222,7 @@ static struct fc_region *find_region_locked(struct fc_pool *pool,
     }
     return NULL;
 }
+/* GCOVR_EXCL_STOP */
 
 static void segv_handler(int sig, siginfo_t *info, void *ucontext) {
     int saved_errno = errno;
@@ -237,19 +247,26 @@ static void segv_handler(int sig, siginfo_t *info, void *ucontext) {
                 return; /* retry the faulting instruction */
             }
         }
-        pthread_mutex_unlock(&pool->lock);
+        pthread_mutex_unlock(&pool->lock); /* GCOVR_EXCL_LINE: see below */
     }
-    pthread_mutex_unlock(&g_pools_lock);
-    errno = saved_errno;
+    pthread_mutex_unlock(&g_pools_lock); /* GCOVR_EXCL_LINE */
+    errno = saved_errno;                 /* GCOVR_EXCL_LINE */
 
     /* Not one of ours -- a genuine fault. Restore whatever disposition
      * was in effect before we installed ours (rather than silently
-     * swallowing real crashes) and chain to it. */
+     * swallowing real crashes) and chain to it.
+     *
+     * Tested (test_segv_passthrough in test-misuse.c forks and crashes
+     * for real outside any region), but that child necessarily
+     * terminates via a signal rather than a normal exit() -- gcov only
+     * flushes counters at normal exit, so these lines never show as
+     * covered despite genuinely running. GCOVR_EXCL_START */
     sigaction(sig, &g_old_action, NULL);
     if ((g_old_action.sa_flags & SA_SIGINFO) && g_old_action.sa_sigaction)
         g_old_action.sa_sigaction(sig, info, ucontext);
     /* else: default/ignore disposition is now restored; returning lets
      * the faulting instruction retry, which raises against it for real. */
+    /* GCOVR_EXCL_STOP */
 }
 
 static void install_handler(void) {
