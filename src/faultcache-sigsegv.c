@@ -73,7 +73,7 @@ struct fc_region {
     bool *initialized;   /* nchunks entries, guarded by the owning pool's lock */
 
     fc_init_chunk_fn_t init_chunk;
-    void *user_data;
+    const void *user_data;
 
     /* Debug-only introspection (see faultcache-debug.h), guarded by the
      * owning pool's lock, same as initialized[]. */
@@ -320,7 +320,7 @@ void fc_pool_destroy(fc_pool_t *pool) {
 
 fc_region_t *fc_region_create(fc_pool_t *pool, uint32_t nchunks,
                                const size_t *chunk_sizes,
-                               fc_init_chunk_fn_t init_chunk, void *user_data) {
+                               fc_init_chunk_fn_t init_chunk, const void *user_data) {
     if (!pool || nchunks == 0 || !chunk_sizes || !init_chunk)
         fc_misuse("fc_region_create: invalid arguments");
 

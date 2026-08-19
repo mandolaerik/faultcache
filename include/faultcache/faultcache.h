@@ -97,7 +97,7 @@ fc_region_t *fc_region_create(fc_pool_t *pool,
                                uint32_t nchunks,
                                const size_t *chunk_sizes,
                                fc_init_chunk_fn_t init_chunk,
-                               void *user_data);
+                               const void *user_data);
 
 /*
  * Release a mapping previously returned by fc_region_create(). `region`
