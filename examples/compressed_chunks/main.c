@@ -81,8 +81,8 @@ static int fixture_load(const char *path, struct fixture *fx) {
 }
 
 static void init_chunk(uint32_t chunk, void *start, size_t size,
-                        void *user_data) {
-    struct fixture *fx = user_data;
+                        const void *user_data) {
+    const struct fixture *fx = user_data;
     const struct chunk_info *ci = &fx->chunks[chunk];
     if (ci->uncompressed_size != size) {
         fprintf(stderr, "chunk %u: size mismatch\n", chunk);

@@ -84,10 +84,11 @@ typedef struct fc_region fc_region_t;
  * be > 0 -- violating that is a caller bug, not a recoverable error,
  * and aborts the process.
  *
- * Returns an opaque handle on success, or NULL on failure (errno is
- * set) if chunk_sizes contains an invalid entry (zero, or one whose
- * running total overflows) or a resource allocation (malloc()/mmap())
- * fails -- both of these can happen even with correct calling code.
+ * Returns an opaque handle on success, or NULL on failure (errno set to
+ * EINVAL) if chunk_sizes contains an invalid entry (zero, or one whose
+ * running total overflows) -- this can happen even with correct calling
+ * code. A resource allocation (malloc()/mmap()) failure currently aborts
+ * the process instead of returning NULL.
  * Use fc_region_base() to get the mapping's base address (of total
  * size sum(chunk_sizes)).
  *

@@ -60,7 +60,8 @@ extern "C" {
  */
 typedef struct fc_client_pool fc_client_pool_t;
 
-/* Returns NULL on failure (errno is set). */
+/* Currently aborts the process on allocation failure (rather than returning
+ * NULL) */
 fc_client_pool_t *fc_client_pool_create(void);
 
 /* Destroys the pool, tearing down any regions still alive within it. */
@@ -83,9 +84,11 @@ typedef struct fc_client_region fc_client_region_t;
  *
  * Blocks until the server has resolved the descriptor and accepted the
  * resulting mapping, so failures are reported synchronously just like
- * fc_region_create(): returns NULL on failure (errno is set; a
- * rejected descriptor -- unknown to the factory, or a resource failure
- * on the server -- is reported as errno = ECONNREFUSED).
+ * fc_region_create(): returns NULL on failure (errno is set) if
+ * `descriptor`/`descriptor_size` are locally invalid, or if the server
+ * rejected the descriptor or the connection otherwise misbehaved
+ * (reported as errno = ECONNREFUSED). A local resource allocation or
+ * syscall failure currently aborts the process instead of returning NULL.
  *
  * If `out_error` is non-NULL, *out_error is always set: NULL if the call
  * succeeded or no message was available, otherwise a malloc()'d,

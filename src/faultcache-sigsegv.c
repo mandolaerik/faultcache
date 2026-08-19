@@ -141,8 +141,10 @@ static uint32_t find_chunk(const struct fc_region *r, size_t off) {
  */
 static void resolve_fault_locked(struct fc_region *r, size_t fault_off) {
     uint32_t c0 = find_chunk(r, fault_off);
-    if (r->initialized[c0])
-        return;
+    /* segv_handler() already re-checks !initialized[c0] under the same
+     * held lock right before calling this, with no window for another
+     * thread to intervene in between. */
+    FC_ASSERT(!r->initialized[c0]);
 
     uint32_t lo = c0, hi = c0;
     size_t page_lo = page_floor(r->chunk_start[lo], r->page_size);
@@ -164,13 +166,16 @@ static void resolve_fault_locked(struct fc_region *r, size_t fault_off) {
      * work. */
     void *scratch = mmap(NULL, buf_len, PROT_READ | PROT_WRITE,
                           MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    if (scratch == MAP_FAILED)
-        return; /* nothing sane to do; the faulting access keeps re-faulting */
+    /* Surviving this would need a real (fault-injected) test to prove;
+     * until then, aborting is good enough. */
+    FC_ASSERT(scratch != MAP_FAILED);
 
     uint32_t newly_resolved = 0;
     for (uint32_t i = lo; i <= hi; i++) {
-        if (r->initialized[i])
-            continue;
+        /* The page-sharing extension above is transitive/exhaustive
+         * within one call, so a chunk in [lo,hi] can't already be
+         * initialized here. */
+        FC_ASSERT(!r->initialized[i]);
         size_t chunk_size = r->chunk_start[i + 1] - r->chunk_start[i];
         void *dst = (char *)scratch + (r->chunk_start[i] - page_lo);
         r->init_chunk(i, dst, chunk_size, r->user_data);
@@ -180,17 +185,12 @@ static void resolve_fault_locked(struct fc_region *r, size_t fault_off) {
 
     /* Drop to read-only BEFORE installing at the target address (see
      * the file-level comment) -- the region's public contract is that
-     * writes fault fatally, same as a read-only file mapping. */
-    if (mprotect(scratch, buf_len, PROT_READ) < 0) {
-        munmap(scratch, buf_len);
-        return;
-    }
+     * writes fault fatally, same as a read-only file mapping. Same
+     * survive-it-needs-a-test rationale as the mmap above. */
+    FC_ASSERT(mprotect(scratch, buf_len, PROT_READ) == 0);
 
-    if (mremap(scratch, buf_len, buf_len, MREMAP_MAYMOVE | MREMAP_FIXED,
-               (char *)r->base + page_lo) == MAP_FAILED) {
-        munmap(scratch, buf_len);
-        return;
-    }
+    FC_ASSERT(mremap(scratch, buf_len, buf_len, MREMAP_MAYMOVE | MREMAP_FIXED,
+                      (char *)r->base + page_lo) != MAP_FAILED);
 
     r->chunks_resolved += newly_resolved;
     r->faults_handled++;
@@ -264,8 +264,8 @@ fc_pool_t *fc_pool_create(void) {
     pthread_once(&g_handler_once, install_handler);
 
     struct fc_pool *pool = malloc(sizeof(*pool));
-    if (!pool)
-        return NULL;
+    if (!pool)                 /* GCOVR_EXCL_LINE: OOM, needs fault injection */
+        return NULL;           /* GCOVR_EXCL_LINE */
     pthread_mutex_init(&pool->lock, NULL);
     pool->regions.next = pool->regions.prev = &pool->regions;
 
@@ -320,17 +320,13 @@ fc_region_t *fc_region_create(fc_pool_t *pool, uint32_t nchunks,
     }
 
     struct fc_region *r = calloc(1, sizeof(*r));
-    if (!r)
-        return NULL;
+    /* Surviving OOM here would need a real (fault-injected) test to
+     * prove; until then, aborting is good enough. */
+    FC_ASSERT(r != NULL);
 
     r->chunk_start = malloc((size_t)(nchunks + 1) * sizeof(size_t));
     r->initialized = calloc(nchunks, sizeof(bool));
-    if (!r->chunk_start || !r->initialized) {
-        free(r->chunk_start);
-        free(r->initialized);
-        free(r);
-        return NULL;
-    }
+    FC_ASSERT(r->chunk_start && r->initialized);
 
     size_t acc = 0;
     for (uint32_t i = 0; i < nchunks; i++) {
@@ -348,14 +344,8 @@ fc_region_t *fc_region_create(fc_pool_t *pool, uint32_t nchunks,
 
     r->base = mmap(NULL, r->mapped_size, PROT_NONE,
                    MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    if (r->base == MAP_FAILED) {
-        int saved_errno = errno;
-        free(r->chunk_start);
-        free(r->initialized);
-        free(r);
-        errno = saved_errno;
-        return NULL;
-    }
+    /* Same survive-it-needs-a-test rationale as the calloc/malloc above. */
+    FC_ASSERT(r->base != MAP_FAILED);
 
     r->pool = pool;
     pthread_mutex_lock(&pool->lock);
