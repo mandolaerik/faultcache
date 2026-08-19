@@ -23,12 +23,12 @@ def test_basic_region():
     counts = [0, 0, 0]
     sizes = [PAGE, PAGE, PAGE]
 
-    def init_chunk(chunk, buf):
+    def fill_chunk(chunk, buf):
         counts[chunk] += 1
         buf[:] = bytes([ord('a') + chunk]) * len(buf)
 
     with faultcache.Pool() as pool:
-        region = pool.Region(sizes, init_chunk)
+        region = pool.Region(sizes, fill_chunk)
         assert len(region) == sum(sizes)
         assert counts == [0, 0, 0]
 
@@ -38,7 +38,7 @@ def test_basic_region():
         assert region[2 * PAGE:2 * PAGE + 3] == bytes([ord('c')]) * 3
         assert counts == [0, 1, 1]
 
-        # Re-reading must not re-invoke init_chunk.
+        # Re-reading must not re-invoke fill_chunk.
         assert region[PAGE:PAGE + 3] == bytes([ord('b')]) * 3
         assert counts == [0, 1, 1]
 
@@ -51,11 +51,11 @@ def test_debug_stats():
     # Same laziness check as test_basic_region, but verified via the C
     # library's own counters (fc_region_debug_stats) instead of relying on
     # a Python-side callback counter.
-    def init_chunk(chunk, buf):
+    def fill_chunk(chunk, buf):
         buf[:] = bytes([ord('a') + chunk]) * len(buf)
 
     with faultcache.Pool() as pool:
-        region = pool.Region([PAGE, PAGE, PAGE], init_chunk)
+        region = pool.Region([PAGE, PAGE, PAGE], fill_chunk)
         stats = region.debug_stats()
         assert stats.nchunks == 3
         assert stats.chunks_resolved == 0
@@ -90,32 +90,32 @@ def test_boundary_sharing_group():
     counts = [0, 0, 0]
     sizes = [100, 50, PAGE * 2]  # chunk2 starts at 150, mid-page.
 
-    def init_chunk(chunk, buf):
+    def fill_chunk(chunk, buf):
         counts[chunk] += 1
         buf[:] = bytes([ord('a') + chunk]) * len(buf)
 
     with faultcache.Pool() as pool:
-        region = pool.Region(sizes, init_chunk)
+        region = pool.Region(sizes, fill_chunk)
         assert region[120] == ord('b')  # inside chunk1
         # chunk2 starts within the same page group and gets pulled in too.
         assert counts == [1, 1, 1]
 
 
 def test_slice_step():
-    def init_chunk(chunk, buf):
+    def fill_chunk(chunk, buf):
         buf[:] = bytes(range(len(buf)))
 
     with faultcache.Pool() as pool:
-        region = pool.Region([16], init_chunk)
+        region = pool.Region([16], fill_chunk)
         assert region[0:16:2] == bytes(range(0, 16, 2))
 
 
 def test_pool_close_closes_regions():
-    def init_chunk(chunk, buf):
+    def fill_chunk(chunk, buf):
         buf[:] = b"\0" * len(buf)
 
     pool = faultcache.Pool()
-    region = pool.Region([PAGE], init_chunk)
+    region = pool.Region([PAGE], fill_chunk)
     assert not region.closed
     pool.close()
     assert region.closed
@@ -123,11 +123,11 @@ def test_pool_close_closes_regions():
 
 
 def test_write_is_fatal():
-    def init_chunk(chunk, buf):
+    def fill_chunk(chunk, buf):
         buf[:] = b"X" * len(buf)
 
     with faultcache.Pool() as pool:
-        region = pool.Region([PAGE], init_chunk)
+        region = pool.Region([PAGE], fill_chunk)
         assert region[0] == ord('X')
 
         pid = os.fork()
@@ -142,11 +142,11 @@ def test_write_is_fatal():
 
 
 def test_access_after_unmap_is_fatal():
-    def init_chunk(chunk, buf):
+    def fill_chunk(chunk, buf):
         buf[:] = b"Z" * len(buf)
 
     pool = faultcache.Pool()
-    region = pool.Region([PAGE], init_chunk)
+    region = pool.Region([PAGE], fill_chunk)
     assert region[0] == ord('Z')
     addr = region._addr
     region.close()
@@ -163,11 +163,11 @@ def test_access_after_unmap_is_fatal():
 
 
 def test_view_zero_copy():
-    def init_chunk(chunk, buf):
+    def fill_chunk(chunk, buf):
         buf[:] = bytes(i % 256 for i in range(len(buf)))
 
     with faultcache.Pool() as pool:
-        region = pool.Region([PAGE, PAGE], init_chunk)
+        region = pool.Region([PAGE, PAGE], fill_chunk)
 
         v = region.view(0, 8)
         assert isinstance(v, memoryview)
@@ -189,11 +189,11 @@ def test_view_lifetime_tracking():
     import gc
     import weakref
 
-    def init_chunk(chunk, buf):
+    def fill_chunk(chunk, buf):
         buf[:] = b"\0" * len(buf)
 
     pool = faultcache.Pool()
-    region = pool.Region([PAGE], init_chunk)
+    region = pool.Region([PAGE], fill_chunk)
 
     v = region.view(0, 10)
     assert region._view_count == 1
@@ -216,11 +216,11 @@ def test_view_lifetime_tracking():
 
 
 def test_view_blocks_close():
-    def init_chunk(chunk, buf):
+    def fill_chunk(chunk, buf):
         buf[:] = b"\0" * len(buf)
 
     with faultcache.Pool() as pool:
-        region = pool.Region([PAGE], init_chunk)
+        region = pool.Region([PAGE], fill_chunk)
         v = region.view(0, 10)
         try:
             region.close()

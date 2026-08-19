@@ -58,7 +58,7 @@ struct fc_region {
     size_t *chunk_start; /* prefix sums, nchunks+1 entries */
     bool *initialized;   /* nchunks entries, guarded by the owning pool's lock */
 
-    fc_init_chunk_fn_t init_chunk;
+    fc_fill_chunk_fn_t fill_chunk;
     const void *user_data;
 
     /* Debug-only introspection (see faultcache-debug.h), guarded by the
@@ -133,7 +133,7 @@ static uint32_t find_chunk(const struct fc_region *r, size_t off) {
  * boundaries need not be page-aligned) covering `fault_off` within `r`,
  * atomically installing the result via mremap(). Called with `r`'s
  * pool lock already held (kept held for the duration, including while
- * running `init_chunk` -- see the struct fc_pool comment above). A
+ * running `fill_chunk` -- see the struct fc_pool comment above). A
  * no-op if `fault_off` turns out to already be resolved (e.g. another
  * thread won the race for the same chunk/page before this call acquired
  * the lock) -- either way, the caller just returns from the signal
@@ -178,7 +178,7 @@ static void resolve_fault_locked(struct fc_region *r, size_t fault_off) {
         FC_ASSERT(!r->initialized[i]);
         size_t chunk_size = r->chunk_start[i + 1] - r->chunk_start[i];
         void *dst = (char *)scratch + (r->chunk_start[i] - page_lo);
-        r->init_chunk(i, dst, chunk_size, r->user_data);
+        r->fill_chunk(i, dst, chunk_size, r->user_data);
         r->initialized[i] = true;
         newly_resolved++;
     }
@@ -323,8 +323,8 @@ void fc_pool_destroy(fc_pool_t *pool) {
 
 fc_region_t *fc_region_create(fc_pool_t *pool, uint32_t nchunks,
                                const size_t *chunk_sizes,
-                               fc_init_chunk_fn_t init_chunk, const void *user_data) {
-    if (!pool || nchunks == 0 || !chunk_sizes || !init_chunk)
+                               fc_fill_chunk_fn_t fill_chunk, const void *user_data) {
+    if (!pool || nchunks == 0 || !chunk_sizes || !fill_chunk)
         fc_misuse("fc_region_create: invalid arguments");
 
     size_t total_size = 0;
@@ -355,7 +355,7 @@ fc_region_t *fc_region_create(fc_pool_t *pool, uint32_t nchunks,
     r->total_size = total_size;
     r->nchunks = nchunks;
     r->page_size = (size_t)sysconf(_SC_PAGESIZE);
-    r->init_chunk = init_chunk;
+    r->fill_chunk = fill_chunk;
     r->user_data = user_data;
     r->mapped_size = page_ceil(total_size, r->page_size);
 

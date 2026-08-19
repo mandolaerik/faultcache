@@ -44,7 +44,7 @@ static char *factory(size_t descriptor_size, const void *descriptor,
         sizes[i] = CHUNK_SIZE;
     out_layout->nchunks = NCHUNKS;
     out_layout->chunk_sizes = sizes;
-    out_layout->init_chunk = fill_chunk;
+    out_layout->fill_chunk = fill_chunk;
     out_layout->region_user_data =
         (void *)(uintptr_t) * (const uint8_t *)descriptor;
     out_layout->destroy_user_data = NULL;

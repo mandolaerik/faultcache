@@ -80,7 +80,7 @@ static int fixture_load(const char *path, struct fixture *fx) {
     return 0;
 }
 
-static void init_chunk(uint32_t chunk, void *start, size_t size,
+static void fill_chunk(uint32_t chunk, void *start, size_t size,
                         const void *user_data) {
     const struct fixture *fx = user_data;
     const struct chunk_info *ci = &fx->chunks[chunk];
@@ -122,7 +122,7 @@ int main(int argc, char **argv) {
     for (uint32_t i = 0; i < fx.nchunks; i++)
         sizes[i] = (size_t)fx.chunks[i].uncompressed_size;
 
-    fc_region_t *region = fc_region_create(pool, fx.nchunks, sizes, init_chunk, &fx);
+    fc_region_t *region = fc_region_create(pool, fx.nchunks, sizes, fill_chunk, &fx);
     if (!region) {
         perror("fc_region_create");
         return 1;

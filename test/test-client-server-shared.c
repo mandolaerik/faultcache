@@ -5,7 +5,7 @@
  * Two client connections handing off regions with the SAME descriptor to
  * one fc_server_t (serviced by two threads, one fc_server_run() call
  * each) must resolve to the same server-side region: each chunk is
- * derived by init_chunk at most once, no matter which connection (or how
+ * derived by fill_chunk at most once, no matter which connection (or how
  * many) faults on it, yet every connection reads back correct content.
  */
 #include "faultcache/faultcache.h"
@@ -23,7 +23,7 @@
 #define CHUNK_SIZE 4096
 #define NCHUNKS 3
 
-/* Server-side only: counts actual init_chunk invocations, via a pipe
+/* Server-side only: counts actual fill_chunk invocations, via a pipe
  * inherited across fork() so the client (parent) can observe it after
  * the server (child) has exited. */
 static int counter_write_fd;
@@ -51,7 +51,7 @@ static char *factory(size_t descriptor_size, const void *descriptor,
         sizes[i] = CHUNK_SIZE;
     out_layout->nchunks = NCHUNKS;
     out_layout->chunk_sizes = sizes;
-    out_layout->init_chunk = fill_chunk;
+    out_layout->fill_chunk = fill_chunk;
     out_layout->region_user_data =
         (void *)(uintptr_t) * (const uint8_t *)descriptor;
     out_layout->destroy_user_data = NULL;
@@ -150,7 +150,7 @@ int main(void) {
     close(counter_pipe[0]);
     CHECK(count == NCHUNKS);
 
-    printf("test_client_server_shared: OK (init_chunk called %d times for %d "
+    printf("test_client_server_shared: OK (fill_chunk called %d times for %d "
            "chunks x 2 connections)\n",
            count, NCHUNKS);
     return 0;

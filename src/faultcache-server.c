@@ -33,7 +33,7 @@ struct fc_server_mapping {
 /*
  * A region's identity is its descriptor. `content`/`resolved` are the
  * server-side resolved-content cache, shared by every mapping attached to
- * this region: a chunk is derived (init_chunk called) at most once no
+ * this region: a chunk is derived (fill_chunk called) at most once no
  * matter how many mappings fault on it, in whatever order.
  */
 struct fc_server_region {
@@ -49,7 +49,7 @@ struct fc_server_region {
     uint8_t *content;     /* mapped_size bytes; content[chunk_start[i]..]
                             * valid once resolved[i] */
 
-    fc_init_chunk_fn_t init_chunk;
+    fc_fill_chunk_fn_t fill_chunk;
     void *user_data;
     void (*destroy_user_data)(void *user_data); /* may be NULL */
 
@@ -113,7 +113,7 @@ static void resolve_fault(struct fc_server *server, struct fc_server_region *r,
         if (r->resolved[i])
             continue; /* already derived by an earlier fault on any mapping */
         size_t chunk_size = r->chunk_start[i + 1] - r->chunk_start[i];
-        r->init_chunk(i, r->content + r->chunk_start[i], chunk_size,
+        r->fill_chunk(i, r->content + r->chunk_start[i], chunk_size,
                        r->user_data);
         r->resolved[i] = true;
     }
@@ -144,7 +144,7 @@ static struct fc_server_region *find_region(struct fc_server *server,
 
 /*
  * Builds a brand-new region for a descriptor not seen before, by calling
- * the factory to turn it into a chunk layout plus a (init_chunk,
+ * the factory to turn it into a chunk layout plus a (fill_chunk,
  * user_data, destroy_user_data) triple. Returns NULL on failure (factory
  * rejection, an invalid layout, or OOM), in which case destroy_user_data
  * (if the factory set one) has already been invoked -- the caller never
@@ -168,11 +168,11 @@ static struct fc_server_region *create_region(fc_region_factory_fn_t factory,
 
     uint32_t nchunks = layout.nchunks;
     size_t *chunk_sizes = layout.chunk_sizes;
-    fc_init_chunk_fn_t init_chunk = layout.init_chunk;
+    fc_fill_chunk_fn_t fill_chunk = layout.fill_chunk;
     void *user_data = layout.region_user_data;
     void (*destroy_user_data)(void *) = layout.destroy_user_data;
 
-    bool layout_ok = nchunks > 0 && chunk_sizes && init_chunk;
+    bool layout_ok = nchunks > 0 && chunk_sizes && fill_chunk;
     size_t acc = 0;
     for (uint32_t i = 0; layout_ok && i < nchunks; i++) {
         if (chunk_sizes[i] == 0 || acc + chunk_sizes[i] < acc)
@@ -232,7 +232,7 @@ static struct fc_server_region *create_region(fc_region_factory_fn_t factory,
     r->chunk_start = chunk_start;
     r->resolved = resolved;
     r->content = content;
-    r->init_chunk = init_chunk;
+    r->fill_chunk = fill_chunk;
     r->user_data = user_data;
     r->destroy_user_data = destroy_user_data;
     return r;

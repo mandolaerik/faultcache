@@ -10,7 +10,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-static void init_chunk(uint32_t chunk, void *start, size_t size,
+static void fill_chunk(uint32_t chunk, void *start, size_t size,
                         const void *user_data) {
     (void)chunk;
     (void)user_data;
@@ -22,7 +22,7 @@ int main(void) {
     CHECK(pool != NULL);
 
     size_t sizes[] = {4096};
-    fc_region_t *region = fc_region_create(pool, 1, sizes, init_chunk, NULL);
+    fc_region_t *region = fc_region_create(pool, 1, sizes, fill_chunk, NULL);
     CHECK(region != NULL);
     const void *base = fc_region_base(region);
     CHECK(((const unsigned char *)base)[0] == 'X');

@@ -14,7 +14,7 @@
  * a region's identity AND its chunk layout: the first client to hand off
  * a given descriptor causes the server to create a region for it (via
  * the factory, turning the descriptor into a chunk layout plus a local
- * fc_init_chunk_fn_t/user_data pair, exactly as if chunk_sizes/init_chunk
+ * fc_fill_chunk_fn_t/user_data pair, exactly as if chunk_sizes/fill_chunk
  * had been supplied directly to fc_region_create()). The client
  * never declares a chunk layout itself -- it asks the server to resolve
  * a descriptor first, and only then creates a mapping sized to match.

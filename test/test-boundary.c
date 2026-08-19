@@ -26,7 +26,7 @@ static int counts[NCHUNKS];
 static const size_t sizes[NCHUNKS] = {100, 50, 30, 4096 - 180, 8222 - 4096,
                                        20};
 
-static void init_chunk(uint32_t chunk, void *start, size_t size,
+static void fill_chunk(uint32_t chunk, void *start, size_t size,
                         const void *user_data) {
     (void)user_data;
     CHECK(size == sizes[chunk]);
@@ -48,7 +48,7 @@ int main(void) {
     CHECK(offsets[4] == 4096);
     CHECK(offsets[5] == 8222);
 
-    fc_region_t *region = fc_region_create(pool, NCHUNKS, sizes, init_chunk, NULL);
+    fc_region_t *region = fc_region_create(pool, NCHUNKS, sizes, fill_chunk, NULL);
     CHECK(region != NULL);
     const unsigned char *p = fc_region_base(region);
 

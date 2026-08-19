@@ -43,7 +43,7 @@ static void record_and_jump(const char *what) {
         CHECK(strstr(g_misuse_what, needle) != NULL);                        \
     } while (0)
 
-static void noop_init_chunk(uint32_t chunk, void *start, size_t size,
+static void noop_fill_chunk(uint32_t chunk, void *start, size_t size,
                              const void *user_data) {
     (void)chunk;
     (void)start;
@@ -92,7 +92,7 @@ static void test_segv_passthrough(void) {
     fc_pool_t *pool = fc_pool_create();
     CHECK(pool != NULL);
     size_t sizes[] = {64};
-    fc_region_t *region = fc_region_create(pool, 1, sizes, noop_init_chunk, NULL);
+    fc_region_t *region = fc_region_create(pool, 1, sizes, noop_fill_chunk, NULL);
     CHECK(region != NULL);
 
     pid_t pid = fork();
@@ -120,12 +120,12 @@ static void test_invalid_chunk_sizes(void) {
 
     size_t has_zero[] = {10, 0, 10};
     errno = 0;
-    CHECK(fc_region_create(pool, 3, has_zero, noop_init_chunk, NULL) == NULL);
+    CHECK(fc_region_create(pool, 3, has_zero, noop_fill_chunk, NULL) == NULL);
     CHECK(errno == EINVAL);
 
     size_t overflows[] = {SIZE_MAX - 5, 10};
     errno = 0;
-    CHECK(fc_region_create(pool, 2, overflows, noop_init_chunk, NULL) == NULL);
+    CHECK(fc_region_create(pool, 2, overflows, noop_fill_chunk, NULL) == NULL);
     CHECK(errno == EINVAL);
 
     fc_pool_destroy(pool);

@@ -11,7 +11,7 @@
 
 static int init_count = 0;
 
-static void init_chunk(uint32_t chunk, void *start, size_t size,
+static void fill_chunk(uint32_t chunk, void *start, size_t size,
                         const void *user_data) {
     (void)user_data;
     CHECK(chunk == 0);
@@ -24,7 +24,7 @@ int main(void) {
     CHECK(pool != NULL);
 
     size_t sizes[] = {4096 * 3 + 17};
-    fc_region_t *region = fc_region_create(pool, 1, sizes, init_chunk, NULL);
+    fc_region_t *region = fc_region_create(pool, 1, sizes, fill_chunk, NULL);
     CHECK(region != NULL);
     CHECK(fc_region_size(region) == sizes[0]);
 

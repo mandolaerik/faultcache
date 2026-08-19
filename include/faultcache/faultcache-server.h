@@ -19,7 +19,7 @@ extern "C" {
 /*
  * A chunk layout plus the (function, user_data) pair used to resolve it,
  * as decided by fc_region_factory_fn_t -- same contract as the
- * chunk_sizes/init_chunk/user_data passed directly to
+ * chunk_sizes/fill_chunk/user_data passed directly to
  * fc_region_create(), except the layout is now the factory's decision,
  * not the caller's. Zeroed by the caller (the library) before the
  * factory is invoked.
@@ -31,7 +31,7 @@ typedef struct {
                            * free()s it once it has copied the sizes out,
                            * immediately after the factory call returns --
                            * do not retain or reuse the pointer */
-    fc_init_chunk_fn_t init_chunk;
+    fc_fill_chunk_fn_t fill_chunk;
     void *region_user_data;
     /*
     * Called when region is destroyed.
@@ -59,7 +59,7 @@ typedef struct {
  * returning.
  *
  * Called from whichever thread's fc_server_run() first observes the
- * descriptor; like init_chunk, must not block on anything that could
+ * descriptor; like fill_chunk, must not block on anything that could
  * deadlock against that loop.
  *
  * `factory_user_data` is passed through unchanged from fc_server_create()

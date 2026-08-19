@@ -61,7 +61,7 @@ static char *factory(size_t descriptor_size, const void *descriptor,
 
     out_layout->nchunks = NCHUNKS;
     out_layout->chunk_sizes = sizes;
-    out_layout->init_chunk = fill_chunk;
+    out_layout->fill_chunk = fill_chunk;
     out_layout->region_user_data = ctx;
     out_layout->destroy_user_data = destroy_user_data;
     return NULL;

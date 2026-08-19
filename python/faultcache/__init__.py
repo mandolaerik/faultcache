@@ -6,10 +6,10 @@
 Mirrors the mmap module's shape: a Pool tracks Regions, and a Region is a
 read-only, lazily-populated byte range that primarily supports slicing.
 Only the bytes actually sliced are ever faulted in and passed to the
-init_chunk callback - unaccessed chunks are never touched.
+fill_chunk callback - unaccessed chunks are never touched.
 
     pool = faultcache.Pool()
-    region = pool.Region([100, 200, 4096], init_chunk)
+    region = pool.Region([100, 200, 4096], fill_chunk)
     region[50:150]   # only touches chunk 0 and chunk 1
 
 Region.view() returns a zero-copy memoryview instead of a bytes copy - see
@@ -48,7 +48,7 @@ def _load_library() -> ctypes.CDLL:
 
 _lib = _load_library()
 
-_InitChunkFn = ctypes.CFUNCTYPE(
+_FillChunkFn = ctypes.CFUNCTYPE(
     None, ctypes.c_uint32, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_void_p
 )
 
@@ -62,7 +62,7 @@ _lib.fc_region_create.argtypes = [
     ctypes.c_void_p,
     ctypes.c_uint32,
     ctypes.POINTER(ctypes.c_size_t),
-    _InitChunkFn,
+    _FillChunkFn,
     ctypes.c_void_p,
 ]
 _lib.fc_region_create.restype = ctypes.c_void_p
@@ -101,14 +101,14 @@ def _read(addr: int, length: int) -> bytes:
     return buf.raw
 
 
-InitChunkFn = Callable[[int, memoryview], None]
+FillChunkFn = Callable[[int, memoryview], None]
 
 
 class Region:
     """A read-only, lazily-populated byte range. Create via Pool.Region()."""
 
     def __init__(self, pool: "Pool", chunk_sizes: Sequence[int],
-                 init_chunk: InitChunkFn):
+                 fill_chunk: FillChunkFn):
         if pool._handle is None:
             raise ValueError("pool is closed")
 
@@ -122,16 +122,16 @@ class Region:
             # accepts unprefixed single-byte formats.
             view = memoryview(buf).cast('B')
             try:
-                init_chunk(chunk, view)
+                fill_chunk(chunk, view)
             except Exception:
                 # Can't propagate across the C callback boundary; the fault
-                # is still resolved with whatever init_chunk wrote (if
+                # is still resolved with whatever fill_chunk wrote (if
                 # anything) before raising.
                 traceback.print_exc()
 
         # Kept alive on self: ctypes does not keep the trampoline/closure
         # alive on the C side, only the CFUNCTYPE wrapper object matters.
-        self._cb = _InitChunkFn(trampoline)
+        self._cb = _FillChunkFn(trampoline)
 
         region = _lib.fc_region_create(pool._handle, n, sizes_arr, self._cb, None)
         if not region:
@@ -282,8 +282,8 @@ class Pool:
             raise OSError(errno, os.strerror(errno))
         self._handle: Optional[int] = handle
         self._regions: "weakref.WeakSet[Region]" = weakref.WeakSet()
-        self.Region: Callable[[Sequence[int], InitChunkFn], Region] = (
-            lambda chunk_sizes, init_chunk: Region(self, chunk_sizes, init_chunk)
+        self.Region: Callable[[Sequence[int], FillChunkFn], Region] = (
+            lambda chunk_sizes, fill_chunk: Region(self, chunk_sizes, fill_chunk)
         )
 
     @property

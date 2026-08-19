@@ -11,7 +11,7 @@
 #define NCHUNKS 5
 static int counts[NCHUNKS];
 
-static void init_chunk(uint32_t chunk, void *start, size_t size,
+static void fill_chunk(uint32_t chunk, void *start, size_t size,
                         const void *user_data) {
     (void)user_data;
     counts[chunk]++;
@@ -24,7 +24,7 @@ int main(void) {
 
     size_t page = 4096;
     size_t sizes[NCHUNKS] = {page, page * 2, page, page * 3, page};
-    fc_region_t *region = fc_region_create(pool, NCHUNKS, sizes, init_chunk, NULL);
+    fc_region_t *region = fc_region_create(pool, NCHUNKS, sizes, fill_chunk, NULL);
     CHECK(region != NULL);
 
     size_t offsets[NCHUNKS];
@@ -44,7 +44,7 @@ int main(void) {
     CHECK(p[offsets[4] + sizes[4] - 1] == 'e');
     CHECK(counts[0] == 1 && counts[4] == 1);
 
-    /* Re-reading an already-resolved chunk must not re-invoke init_chunk. */
+    /* Re-reading an already-resolved chunk must not re-invoke fill_chunk. */
     CHECK(p[offsets[2] + sizes[2] - 1] == 'c');
     CHECK(counts[2] == 1);
 

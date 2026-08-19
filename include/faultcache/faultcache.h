@@ -8,7 +8,7 @@
  * divided into "chunks", tracked by a pool. No chunk is populated
  * until it is first accessed: touching any byte inside a chunk triggers
  * a page fault that is resolved by invoking the user-supplied
- * init_chunk() callback, which fills that chunk's bytes. Once resolved,
+ * fill_chunk() callback, which fills that chunk's bytes. Once resolved,
  * a chunk behaves exactly like a page cached by mmap(PROT_READ):
  * subsequent reads are free, and writes are illegal (they fault fatally,
  * just as they would on a read-only file mapping).
@@ -18,7 +18,7 @@
  * are actually read.
  *
  * This header covers the in-process API: chunk content is derived
- * in-process by init_chunk(). See faultcache-client.h/faultcache-server.h
+ * in-process by fill_chunk(). See faultcache-client.h/faultcache-server.h
  * for the split client/server variant, where content is derived by a
  * separate server process.
  *
@@ -66,7 +66,7 @@ void fc_pool_destroy(fc_pool_t *pool);
  * are not yet supported) and should stick to simple, reentrant work,
  * since it runs in a signal handler's context.
  */
-typedef void (*fc_init_chunk_fn_t)(uint32_t chunk, void *start, size_t size,
+typedef void (*fc_fill_chunk_fn_t)(uint32_t chunk, void *start, size_t size,
                                    const void *user_data);
 
 /* Opaque handle to a region created by fc_region_create(), tracked by
@@ -80,7 +80,7 @@ typedef struct fc_region fc_region_t;
  * consecutive chunks whose sizes are given by chunk_sizes[0..nchunks-1],
  * tracked by `pool`.
  *
- * `pool`/`chunk_sizes`/`init_chunk` must be non-NULL and `nchunks` must
+ * `pool`/`chunk_sizes`/`fill_chunk` must be non-NULL and `nchunks` must
  * be > 0 -- violating that is a caller bug, not a recoverable error,
  * and aborts the process.
  *
@@ -97,7 +97,7 @@ typedef struct fc_region fc_region_t;
 fc_region_t *fc_region_create(fc_pool_t *pool,
                                uint32_t nchunks,
                                const size_t *chunk_sizes,
-                               fc_init_chunk_fn_t init_chunk,
+                               fc_fill_chunk_fn_t fill_chunk,
                                const void *user_data);
 
 /*
