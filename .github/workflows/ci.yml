@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: default
+            build_dir: build
+            setup_args: ""
+          - name: asan
+            build_dir: build-asan
+            setup_args: "-Db_sanitize=address,undefined"
+    name: ${{ matrix.name }}
+    env:
+      ASAN_OPTIONS: detect_leaks=1
+      UBSAN_OPTIONS: print_stacktrace=1,halt_on_error=1
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y meson ninja-build zlib1g-dev
+
+      - name: meson setup
+        run: meson setup ${{ matrix.build_dir }} ${{ matrix.setup_args }}
+
+      - name: Build
+        run: ninja -C ${{ matrix.build_dir }}
+
+      - name: Test
+        run: meson test -C ${{ matrix.build_dir }} --print-errorlogs
