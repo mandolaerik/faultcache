@@ -107,7 +107,8 @@ static void test_segv_passthrough(void) {
     CHECK(WIFSIGNALED(status));
     CHECK(WTERMSIG(status) == SIGSEGV);
 
-    fc_region_destroy(region);
+    /* Destroying the pool (not the region directly) also exercises
+     * fc_pool_destroy()'s "clean up any regions still alive" path. */
     fc_pool_destroy(pool);
 }
 #endif
@@ -142,10 +143,33 @@ static void test_pool_destroy_not_head(void) {
     fc_pool_destroy(NULL); /* no-op, must not crash */
 }
 
+static void test_client_pool_destroy_null(void) {
+    fc_client_pool_destroy(NULL); /* no-op, must not crash */
+}
+
+/* Descriptor too large to ever fit in a wire message: resolve_descriptor()
+ * must reject it (EMSGSIZE) before touching server_fd or dereferencing
+ * descriptor at all, so this needs neither a real server nor a valid fd. */
+static void test_client_region_create_oversized_descriptor(void) {
+    fc_client_pool_t *pool = fc_client_pool_create();
+    CHECK(pool != NULL);
+
+    char dummy = 0;
+    errno = 0;
+    fc_client_region_t *region = fc_client_region_create(
+        pool, -1, SIZE_MAX / 2, &dummy, NULL);
+    CHECK(region == NULL);
+    CHECK(errno == EMSGSIZE);
+
+    fc_client_pool_destroy(pool);
+}
+
 int main(void) {
     test_hooked_misuse_cases();
     test_invalid_chunk_sizes();
     test_pool_destroy_not_head();
+    test_client_pool_destroy_null();
+    test_client_region_create_oversized_descriptor();
     test_default_abort_still_works();
     test_segv_passthrough();
     return 0;

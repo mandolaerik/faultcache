@@ -101,8 +101,7 @@ int main(void) {
     for (size_t i = 0; i < NCHUNKS * CHUNK_SIZE; i++)
         CHECK(bytes[i] == 0x7C);
 
-    fc_client_region_destroy(region);
-    fc_client_pool_destroy(pool);
+    fc_client_pool_destroy(pool); /* also covers cleanup of a still-live region */
 
     close(sv[0]); /* server thread sees EOF, fc_server_run() returns */
     pthread_join(server_thread, NULL);
