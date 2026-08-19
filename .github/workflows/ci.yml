@@ -43,3 +43,28 @@ jobs:
 
       - name: Test
         run: meson test -C ${{ matrix.build_dir }} --print-errorlogs
+
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y meson ninja-build zlib1g-dev gcovr
+
+      - name: meson setup
+        run: meson setup build-coverage -Db_coverage=true
+
+      - name: Build
+        run: ninja -C build-coverage
+
+      - name: Test
+        run: meson test -C build-coverage --print-errorlogs
+
+      # src/ is gated at 100% line coverage; genuinely untestable/deprioritized
+      # lines are marked GCOVR_EXCL. examples/ and test/ aren't held to the
+      # same bar, so they're excluded from this gate.
+      - name: Coverage (src/ must be 100% line coverage)
+        run: gcovr --root . --filter 'src/.*\.c$' --fail-under-line 100 --print-summary build-coverage
