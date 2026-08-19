@@ -9,7 +9,8 @@
  * the destroy-call counter can be an ordinary shared variable.
  */
 #include "faultcache/faultcache.h"
-#include "faultcache/faultcache-client-server.h"
+#include "faultcache/faultcache-client.h"
+#include "faultcache/faultcache-server.h"
 #include "test-util.h"
 
 #include <pthread.h>

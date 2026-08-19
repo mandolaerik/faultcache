@@ -12,7 +12,8 @@ faultcache_dep = declare_dependency(
   include_directories: inc)
 
 install_headers('../include/faultcache/faultcache.h',
-  '../include/faultcache/faultcache-client-server.h',
+  '../include/faultcache/faultcache-client.h',
+  '../include/faultcache/faultcache-server.h',
   subdir: 'faultcache')
 
 pkg = import('pkgconfig')

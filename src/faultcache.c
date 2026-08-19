@@ -6,7 +6,7 @@
 #define _GNU_SOURCE
 #include "faultcache/faultcache.h"
 #include "faultcache/faultcache-debug.h"
-#include "faultcache/faultcache-client-server.h"
+#include "faultcache/faultcache-client.h"
 #include "faultcache-wire.h"
 
 #include <errno.h>
@@ -29,7 +29,7 @@
 
 /*
  * The client half of the client/server split (see
- * faultcache-client-server.h): resolution happens in a separate server
+ * faultcache-client.h): resolution happens in a separate server
  * process, reached via UFFDIO_COPY over the uffd fd handed off at
  * creation time -- unlike fc_pool_t (src/faultcache-sigsegv.c), a
  * client region has no local handler thread of its own.
@@ -143,7 +143,7 @@ static size_t page_ceil(size_t x, size_t page_size) {
 
 /*
  * Phase 1 of remote region creation: asks the server to resolve
- * `descriptor` into a chunk layout (see faultcache-client-server.h -- the
+ * `descriptor` into a chunk layout (see faultcache-server.h -- the
  * server's factory owns chunk layout now, not the caller). On success,
  * returns a malloc'd array of `*out_nchunks` chunk sizes (caller frees
  * with free()); returns NULL on failure (errno set; ECONNREFUSED if the

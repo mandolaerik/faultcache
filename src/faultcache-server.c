@@ -4,7 +4,7 @@
  */
 
 #define _GNU_SOURCE
-#include "faultcache/faultcache-client-server.h"
+#include "faultcache/faultcache-server.h"
 #include "faultcache-wire.h"
 
 #include <errno.h>
@@ -23,7 +23,7 @@
 
 /* One per client handoff attached to a region (possibly several per
  * region, when multiple handoffs share a descriptor -- see
- * faultcache-client-server.h). */
+ * faultcache-client.h). */
 struct fc_server_mapping {
     struct fc_server_mapping *next;
     int uffd;

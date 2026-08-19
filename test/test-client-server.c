@@ -8,7 +8,8 @@
  * reading from it, letting the child resolve its faults.
  */
 #include "faultcache/faultcache.h"
-#include "faultcache/faultcache-client-server.h"
+#include "faultcache/faultcache-client.h"
+#include "faultcache/faultcache-server.h"
 #include "test-util.h"
 
 #include <stdint.h>
