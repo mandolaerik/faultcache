@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MPL-2.0
 
 faultcache_lib = library('faultcache', 'faultcache.c', 'faultcache-server.c',
-  'faultcache-sigsegv.c',
+  'faultcache-sigsegv.c', 'faultcache-misuse.c',
   include_directories: inc,
   dependencies: [thread_dep],
   install: true)

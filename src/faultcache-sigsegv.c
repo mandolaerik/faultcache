@@ -22,6 +22,7 @@
 #define _GNU_SOURCE
 #include "faultcache/faultcache.h"
 #include "faultcache/faultcache-debug.h"
+#include "faultcache-internal.h"
 
 #include <errno.h>
 #include <pthread.h>
@@ -32,21 +33,6 @@
 #include <stdlib.h>
 #include <sys/mman.h>
 #include <unistd.h>
-
-/*
- * Argument/precondition violations (bad pointers, wrong nchunks, a
- * destroyed handle reused) are bugs in the CALLER, never a legitimate
- * runtime condition for correctly-written code -- checking a return
- * value for them would be pure cargo-culting since it never trips on
- * correct code, so real misuse would go uncaught. abort() instead of
- * returning a soft, easily-ignored error code. Contrast with genuine
- * resource failures (malloc()/mmap() running out), which CAN happen to
- * correct code and still return NULL/errno from fc_region_create().
- */
-static void fc_misuse(const char *what) {
-    fprintf(stderr, "faultcache: misuse: %s\n", what);
-    abort();
-}
 
 /*
  * Also the public fc_region_t (see faultcache.h): the header only

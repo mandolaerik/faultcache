@@ -34,6 +34,26 @@ struct fc_region_debug_stats {
 void fc_region_debug_stats(const fc_region_t *region,
                            struct fc_region_debug_stats *out);
 
+/*
+ * Overrides what happens when the library detects a caller bug (NULL/
+ * invalid handle, bad arguments -- see e.g. fc_region_destroy()) across
+ * BOTH faultcache.h and faultcache-client.h. By default (hook == NULL)
+ * this prints a diagnostic to stderr and abort()s the process; tests
+ * can install a hook to observe/verify a specific misuse case without
+ * killing the test binary.
+ *
+ * The hook must NOT return normally -- every call site assumes control
+ * never comes back (it goes on to dereference the very handle that was
+ * just rejected) -- so a hook has to divert control flow itself, e.g.
+ * via siglongjmp(). If a hook is installed but returns anyway, the
+ * library falls back to the default print+abort() as a safety net.
+ *
+ * Debug-only, not part of the stable API. Not thread-safe (a single
+ * process-wide slot) -- for single-threaded test use only.
+ */
+typedef void (*fc_misuse_hook_t)(const char *what);
+void fc_debug_set_misuse_hook(fc_misuse_hook_t hook);
+
 #ifdef __cplusplus
 }
 #endif

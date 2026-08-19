@@ -7,6 +7,7 @@
 #include "faultcache/faultcache.h"
 #include "faultcache/faultcache-debug.h"
 #include "faultcache/faultcache-client.h"
+#include "faultcache-internal.h"
 #include "faultcache-wire.h"
 
 #include <errno.h>
@@ -27,13 +28,6 @@
 #ifndef UFFD_USER_MODE_ONLY
 #define UFFD_USER_MODE_ONLY 1
 #endif
-
-/* See fc_misuse() in faultcache-sigsegv.c for the rationale: a bad
- * handle is a caller bug, not a recoverable runtime condition. */
-static void fc_misuse(const char *what) {
-    fprintf(stderr, "faultcache: misuse: %s\n", what);
-    abort();
-}
 
 /*
  * The client half of the client/server split (see
