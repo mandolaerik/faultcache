@@ -29,7 +29,7 @@
 static int counter_write_fd;
 
 static void fill_chunk(uint32_t chunk, void *start, size_t size,
-                        void *user_data) {
+                        const void *user_data) {
     (void)chunk;
     uint8_t value = (uint8_t)(uintptr_t)user_data;
     memset(start, value, size);

@@ -12,7 +12,7 @@
 static int counts[NCHUNKS];
 
 static void init_chunk(uint32_t chunk, void *start, size_t size,
-                        void *user_data) {
+                        const void *user_data) {
     (void)user_data;
     counts[chunk]++;
     memset(start, 'a' + (int)chunk, size);

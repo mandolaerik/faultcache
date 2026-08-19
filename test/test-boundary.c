@@ -27,7 +27,7 @@ static const size_t sizes[NCHUNKS] = {100, 50, 30, 4096 - 180, 8222 - 4096,
                                        20};
 
 static void init_chunk(uint32_t chunk, void *start, size_t size,
-                        void *user_data) {
+                        const void *user_data) {
     (void)user_data;
     CHECK(size == sizes[chunk]);
     counts[chunk]++;

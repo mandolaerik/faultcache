@@ -12,7 +12,7 @@
 static int init_count = 0;
 
 static void init_chunk(uint32_t chunk, void *start, size_t size,
-                        void *user_data) {
+                        const void *user_data) {
     (void)user_data;
     CHECK(chunk == 0);
     init_count++;

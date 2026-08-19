@@ -11,7 +11,7 @@
 #include <unistd.h>
 
 static void init_chunk(uint32_t chunk, void *start, size_t size,
-                        void *user_data) {
+                        const void *user_data) {
     (void)chunk;
     (void)user_data;
     memset(start, 'X', size);

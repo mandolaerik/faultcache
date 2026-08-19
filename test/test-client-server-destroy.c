@@ -30,9 +30,9 @@ struct user_ctx {
 static int g_destroy_calls = 0;
 
 static void fill_chunk(uint32_t chunk, void *start, size_t size,
-                        void *user_data) {
+                        const void *user_data) {
     (void)chunk;
-    struct user_ctx *ctx = user_data;
+    const struct user_ctx *ctx = user_data;
     memset(start, ctx->fill_value, size);
 }
 
