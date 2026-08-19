@@ -32,9 +32,7 @@ static void fill_chunk(uint32_t chunk, void *start, size_t size,
  * fill_chunk()'s user_data to. Chunk layout is fixed for this test, but
  * decided entirely by the factory -- the client never states it. */
 static char *factory(size_t descriptor_size, const void *descriptor,
-                      uint32_t *out_nchunks, size_t **out_chunk_sizes,
-                      fc_init_chunk_fn_t *out_init_chunk, void **out_user_data,
-                      fc_region_destroy_fn_t *out_destroy_user_data,
+                      fc_region_recipe_t *out_layout,
                       void *factory_user_data) {
     (void)factory_user_data;
     if (descriptor_size != 1)
@@ -44,11 +42,12 @@ static char *factory(size_t descriptor_size, const void *descriptor,
         return strdup("out of memory");
     for (uint32_t i = 0; i < NCHUNKS; i++)
         sizes[i] = CHUNK_SIZE;
-    *out_nchunks = NCHUNKS;
-    *out_chunk_sizes = sizes;
-    *out_init_chunk = fill_chunk;
-    *out_user_data = (void *)(uintptr_t) * (const uint8_t *)descriptor;
-    *out_destroy_user_data = NULL;
+    out_layout->nchunks = NCHUNKS;
+    out_layout->chunk_sizes = sizes;
+    out_layout->init_chunk = fill_chunk;
+    out_layout->init_chunk_user_data =
+        (void *)(uintptr_t) * (const uint8_t *)descriptor;
+    out_layout->destroy_user_data = NULL;
     return NULL;
 }
 

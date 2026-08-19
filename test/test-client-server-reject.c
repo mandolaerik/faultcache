@@ -20,16 +20,10 @@
 #include <unistd.h>
 
 static char *factory(size_t descriptor_size, const void *descriptor,
-                      uint32_t *out_nchunks, size_t **out_chunk_sizes,
-                      fc_init_chunk_fn_t *out_init_chunk, void **out_user_data,
-                      fc_region_destroy_fn_t *out_destroy_user_data,
+                      fc_region_recipe_t *out_layout,
                       void *factory_user_data) {
     (void)descriptor;
-    (void)out_nchunks;
-    (void)out_chunk_sizes;
-    (void)out_init_chunk;
-    (void)out_user_data;
-    (void)out_destroy_user_data;
+    (void)out_layout;
     (void)factory_user_data;
     CHECK(descriptor_size == 1);
     return strdup("descriptor rejected: unknown fill value");

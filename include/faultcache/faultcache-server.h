@@ -17,42 +17,46 @@ extern "C" {
 #endif
 
 /*
- * Called once user_data (as set by the factory) is no longer needed --
- * currently only when the owning fc_server_t is torn down via
- * fc_server_destroy(); freeing it earlier, e.g. once a region's last
- * attached client disconnects, is a known follow-up not implemented yet
- * (see TODO.md). May be NULL if user_data needs no cleanup (e.g. it
- * isn't a pointer to anything owned, as in fc_init_chunk_fn_t's own
- * user_data contract).
+ * A chunk layout plus the (function, user_data) pair used to resolve it,
+ * as decided by fc_region_factory_fn_t -- same contract as the
+ * chunk_sizes/init_chunk/user_data passed directly to
+ * fc_region_create(), except the layout is now the factory's decision,
+ * not the caller's. Zeroed by the caller (the library) before the
+ * factory is invoked.
  */
-typedef void (*fc_region_destroy_fn_t)(void *user_data);
+typedef struct {
+    uint32_t nchunks;    /* > 0 */
+    size_t *chunk_sizes; /* malloc()'d, nchunks entries, each > 0;
+                           * ownership transfers to the caller, which
+                           * free()s it once it has copied the sizes out,
+                           * immediately after the factory call returns --
+                           * do not retain or reuse the pointer */
+    fc_init_chunk_fn_t init_chunk;
+    void *region_user_data;
+    /*
+    * Called when region is destroyed.
+    * Currently only when the owning fc_server_t is torn down via
+    * fc_server_destroy(), but may happen later. May be NULL if user_data
+    * needs no cleanup.
+    */
+    void (*destroy_user_data)(void *region_user_data);
+} fc_region_recipe_t;
 
 /*
  * Called the first time a descriptor is seen by a given fc_server_t (not
  * once per handoff -- see faultcache-client.h), turning that descriptor
- * into a chunk layout plus a local (function, user_data) pair used to
- * resolve the region's chunks -- same contract as the
- * chunk_sizes/init_chunk/user_data passed directly to
- * fc_region_create(), except the layout is now the factory's
- * decision, not the caller's.
+ * into an `out_layout`.
  *
- * On success, must set every out parameter and return NULL:
- *   - *out_nchunks: the number of chunks, > 0.
- *   - *out_chunk_sizes: a malloc()'d array of *out_nchunks sizes, each
- *     > 0. Ownership transfers to the caller (the library), which
- *     free()s it once it has copied the sizes out, immediately after
- *     this call returns -- do not retain or reuse the pointer.
- *   - *out_init_chunk, *out_user_data: as for fc_region_create().
- *   - *out_destroy_user_data: see fc_region_destroy_fn_t. May be left
- *     NULL.
+ * On success, must set every field of `*out_layout` and return NULL.
  * To reject the descriptor, return a malloc()'d, human-readable message
  * explaining why (never NULL, which means success -- return e.g.
  * strdup("") if there's nothing more specific to say); ownership
  * transfers to the caller (the library), which free()s it after relaying
  * it to the client's fc_client_region_create() call. This fails that
- * call synchronously; any of *out_chunk_sizes already allocated is still
- * free()'d by the caller in this case, but *out_user_data is not --
- * release it yourself before returning.
+ * call synchronously; any of out_layout->chunk_sizes already allocated
+ * is still free()'d by the caller in this case, but
+ * out_layout->region_user_data is not -- release it yourself before
+ * returning.
  *
  * Called from whichever thread's fc_server_run() first observes the
  * descriptor; like init_chunk, must not block on anything that could
@@ -63,12 +67,10 @@ typedef void (*fc_region_destroy_fn_t)(void *user_data);
  * binding can wrap a single caller-supplied callback/context pair in one
  * C trampoline instead of generating one per registration.
  */
-typedef char *(*fc_region_factory_fn_t)(
-    size_t descriptor_size, const void *descriptor,
-    uint32_t *out_nchunks, size_t **out_chunk_sizes,
-    fc_init_chunk_fn_t *out_init_chunk, void **out_init_chunk_user_data,
-    fc_region_destroy_fn_t *out_destroy,
-    void *factory_user_data);
+typedef char *(*fc_region_factory_fn_t)(size_t descriptor_size,
+                                         const void *descriptor,
+                                         fc_region_recipe_t *out_recipe,
+                                         void *factory_user_data);
 
 typedef struct fc_server fc_server_t;
 
