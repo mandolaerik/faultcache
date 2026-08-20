@@ -114,6 +114,59 @@ static void test_segv_passthrough(void) {
 #endif
 
 
+static fc_region_t *g_inner_region;
+
+/* Mimics layering faultcache in two levels (an outer region's fill_chunk
+ * deriving its content from an inner, still-unresolved region) -- not
+ * supported, and deliberately not worth supporting: faultcache is a
+ * low-level mechanism, and merging both derivation steps into one
+ * fill_chunk is simpler and faster than layering two caches. Must
+ * trigger segv_handler()'s g_resolving_fault check (fc_misuse() +
+ * abort()), not a deadlock or an unexplained crash. */
+static void fill_chunk_touches_other_region(uint32_t chunk, void *start,
+                                             size_t size,
+                                             const void *user_data) {
+    (void)chunk;
+    (void)user_data;
+    memset(start, 0, size);
+    const unsigned char *inner = fc_region_base(g_inner_region);
+    volatile unsigned char v = inner[0]; /* g_inner_region, not yet resolved */
+    (void)v;
+}
+
+static void test_nested_fault_across_regions_is_fatal(void) {
+    fc_pool_t *outer_pool = fc_pool_create();
+    fc_pool_t *inner_pool = fc_pool_create();
+    CHECK(outer_pool != NULL && inner_pool != NULL);
+
+    size_t inner_size[] = {64};
+    fc_region_t *inner_region = fc_region_create(inner_pool, 1, inner_size,
+                                                  noop_fill_chunk, NULL);
+    CHECK(inner_region != NULL);
+    g_inner_region = inner_region;
+
+    size_t outer_size[] = {64};
+    fc_region_t *outer_region = fc_region_create(
+        outer_pool, 1, outer_size, fill_chunk_touches_other_region, NULL);
+    CHECK(outer_region != NULL);
+
+    pid_t pid = fork();
+    CHECK(pid >= 0);
+    if (pid == 0) {
+        const unsigned char *base = fc_region_base(outer_region);
+        volatile unsigned char v = base[0]; /* resolves outer, touching inner */
+        (void)v;
+        _exit(0); /* unreachable: fc_misuse() aborts first */
+    }
+    int status;
+    CHECK(waitpid(pid, &status, 0) == pid);
+    CHECK(WIFSIGNALED(status));
+    CHECK(WTERMSIG(status) == SIGABRT);
+
+    fc_pool_destroy(outer_pool);
+    fc_pool_destroy(inner_pool);
+}
+
 static void test_invalid_chunk_sizes(void) {
     fc_pool_t *pool = fc_pool_create();
     CHECK(pool != NULL);
@@ -172,5 +225,6 @@ int main(void) {
     test_client_region_create_oversized_descriptor();
     test_default_abort_still_works();
     test_segv_passthrough();
+    test_nested_fault_across_regions_is_fatal();
     return 0;
 }

@@ -107,6 +107,19 @@ static struct fc_pool *g_pools = NULL;
 static pthread_once_t g_handler_once = PTHREAD_ONCE_INIT;
 static struct sigaction g_old_action;
 
+/*
+ * True for the duration of resolve_fault_locked() on this thread (set
+ * around the call in segv_handler(), below). Lets segv_handler() detect
+ * fill_chunk() touching a not-yet-resolved page of its own or another
+ * region while already running -- the resolve in progress holds
+ * pool->lock (and g_pools_lock), both plain non-recursive mutexes, so
+ * naively recursing into the normal fault path here would deadlock this
+ * thread against itself instead of making progress. Per-thread rather
+ * than a single process-wide flag since faults on different threads are
+ * legitimately concurrent and must not be confused with each other.
+ */
+static __thread bool g_resolving_fault = false;
+
 static size_t page_floor(size_t x, size_t page_size) {
     return x - (x % page_size);
 }
@@ -228,6 +241,30 @@ static void segv_handler(int sig, siginfo_t *info, void *ucontext) {
     int saved_errno = errno;
     uintptr_t addr = (uintptr_t)info->si_addr;
 
+    if (g_resolving_fault) {
+        /* A fault occurred while already resolving another fault on this
+         * thread -- either fill_chunk() touched a not-yet-resolved page
+         * (of its own or another region), or something inside it crashed
+         * outright. Either way, retrying the normal path here would
+         * recurse into locks resolve_fault_locked already holds (plain,
+         * non-recursive mutexes) instead of making progress, so treat it
+         * as the caller bug it is rather than deadlocking. errno is
+         * restored first since fc_misuse()'s default path calls
+         * fprintf().
+         *
+         * Tested (test_nested_fault_is_fatal in test-misuse.c forks and
+         * triggers this for real), but that child necessarily terminates
+         * via fc_misuse()'s abort() rather than a normal exit() -- gcov
+         * only flushes counters at normal exit, so these lines never
+         * show as covered despite genuinely running. GCOVR_EXCL_START */
+        errno = saved_errno;
+        fc_misuse("fault raised while fill_chunk() was still resolving "
+                  "another fault -- nested/recursive faults are not "
+                  "supported");
+        return;
+        /* GCOVR_EXCL_STOP */
+    }
+
     pthread_mutex_lock(&g_pools_lock);
     for (struct fc_pool *pool = g_pools; pool; pool = pool->next_pool) {
         pthread_mutex_lock(&pool->lock);
@@ -240,7 +277,9 @@ static void segv_handler(int sig, siginfo_t *info, void *ucontext) {
              * chunk). Don't swallow it: fall through to the crash path
              * below, same as an address outside any region. */
             if (!r->initialized[find_chunk(r, fault_off)]) {
+                g_resolving_fault = true;
                 resolve_fault_locked(r, fault_off);
+                g_resolving_fault = false;
                 pthread_mutex_unlock(&pool->lock);
                 pthread_mutex_unlock(&g_pools_lock);
                 errno = saved_errno;
@@ -272,7 +311,15 @@ static void segv_handler(int sig, siginfo_t *info, void *ucontext) {
 static void install_handler(void) {
     struct sigaction sa = {0};
     sa.sa_sigaction = segv_handler;
-    sa.sa_flags = SA_SIGINFO;
+    /* SA_NODEFER: without it, SIGSEGV is auto-blocked for this thread
+     * for the handler's duration, and a synchronous fault (e.g.
+     * fill_chunk touching another unresolved page) raised while it's
+     * blocked can't be delivered to us at all -- the kernel forces the
+     * signal's default disposition instead, killing the process with a
+     * raw, undiagnosed SIGSEGV. With it, such a fault re-enters this
+     * handler, where g_resolving_fault turns it into a clear
+     * fc_misuse() diagnostic instead. */
+    sa.sa_flags = SA_SIGINFO | SA_NODEFER;
     sigemptyset(&sa.sa_mask);
     sigaction(SIGSEGV, &sa, &g_old_action);
 }
