@@ -102,7 +102,7 @@ static void region_list_remove(struct fc_region *r) {
  * given faulting address belongs to.
  */
 static pthread_mutex_t g_pools_lock = PTHREAD_MUTEX_INITIALIZER;
-static struct fc_pool *g_pools = NULL;
+static struct fc_pool *g_pools = nullptr;
 
 static pthread_once_t g_handler_once = PTHREAD_ONCE_INIT;
 static struct sigaction g_old_action;
@@ -177,7 +177,7 @@ static void resolve_fault_locked(struct fc_region *r, size_t fault_off) {
      * any tail padding past the last chunk (or bytes not covered by any
      * chunk on a shared boundary page) reads back as 0 with no extra
      * work. */
-    void *scratch = mmap(NULL, buf_len, PROT_READ | PROT_WRITE,
+    void *scratch = mmap(nullptr, buf_len, PROT_READ | PROT_WRITE,
                           MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     /* Surviving this would need a real (fault-injected) test to prove;
      * until then, aborting is good enough. */
@@ -224,7 +224,7 @@ static struct fc_region *find_region_locked(struct fc_pool *pool,
             addr < (uintptr_t)r->base + r->mapped_size)
             return r;
     }
-    return NULL;
+    return nullptr;
 }
 
 static void segv_handler(int sig, siginfo_t *info, void *ucontext) {
@@ -293,7 +293,7 @@ static void segv_handler(int sig, siginfo_t *info, void *ucontext) {
      * flush counters for the lines below (a dump placed before them
      * would miss their counters, since gcov only credits a line once
      * its block is actually entered). */
-    sigaction(sig, &g_old_action, NULL);
+    sigaction(sig, &g_old_action, nullptr);
     if ((g_old_action.sa_flags & SA_SIGINFO) && g_old_action.sa_sigaction)
         g_old_action.sa_sigaction(sig, info, ucontext);
     /* else: default/ignore disposition is now restored; returning lets
@@ -322,8 +322,8 @@ fc_pool_t *fc_pool_create(void) {
 
     struct fc_pool *pool = malloc(sizeof(*pool));
     if (!pool)                 /* GCOVR_EXCL_LINE: OOM, needs fault injection */
-        return NULL;           /* GCOVR_EXCL_LINE */
-    pthread_mutex_init(&pool->lock, NULL);
+        return nullptr;           /* GCOVR_EXCL_LINE */
+    pthread_mutex_init(&pool->lock, nullptr);
     pool->regions.next = pool->regions.prev = &pool->regions;
 
     pthread_mutex_lock(&g_pools_lock);
@@ -371,7 +371,7 @@ fc_region_t *fc_region_create(fc_pool_t *pool, uint32_t nchunks,
     for (uint32_t i = 0; i < nchunks; i++) {
         if (chunk_sizes[i] == 0 || total_size + chunk_sizes[i] < total_size) {
             errno = EINVAL;
-            return NULL;
+            return nullptr;
         }
         total_size += chunk_sizes[i];
     }
@@ -379,7 +379,7 @@ fc_region_t *fc_region_create(fc_pool_t *pool, uint32_t nchunks,
     struct fc_region *r = calloc(1, sizeof(*r));
     /* Surviving OOM here would need a real (fault-injected) test to
      * prove; until then, aborting is good enough. */
-    FC_ASSERT(r != NULL);
+    FC_ASSERT(r != nullptr);
 
     r->chunk_start = malloc((size_t)(nchunks + 1) * sizeof(size_t));
     r->initialized = calloc(nchunks, sizeof(bool));
@@ -399,7 +399,7 @@ fc_region_t *fc_region_create(fc_pool_t *pool, uint32_t nchunks,
     r->user_data = user_data;
     r->mapped_size = page_ceil(total_size, r->page_size);
 
-    r->base = mmap(NULL, r->mapped_size, PROT_NONE,
+    r->base = mmap(nullptr, r->mapped_size, PROT_NONE,
                    MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     /* Same survive-it-needs-a-test rationale as the calloc/malloc above. */
     FC_ASSERT(r->base != MAP_FAILED);
@@ -413,13 +413,13 @@ fc_region_t *fc_region_create(fc_pool_t *pool, uint32_t nchunks,
 
 const void *fc_region_base(const fc_region_t *region) {
     if (!region)
-        fc_misuse("fc_region_base: NULL region");
+        fc_misuse("fc_region_base: nullptr region");
     return region->base;
 }
 
 void fc_region_destroy(fc_region_t *region) {
     if (!region)
-        fc_misuse("fc_region_destroy: NULL region");
+        fc_misuse("fc_region_destroy: nullptr region");
 
     struct fc_pool *pool = region->pool;
     pthread_mutex_lock(&pool->lock);
@@ -431,7 +431,7 @@ void fc_region_destroy(fc_region_t *region) {
 
 size_t fc_region_size(const fc_region_t *region) {
     if (!region)
-        fc_misuse("fc_region_size: NULL region");
+        fc_misuse("fc_region_size: nullptr region");
     /* total_size is set once at creation, before the handle is ever
      * published to a caller, and never changes again -- no lock needed. */
     return region->total_size;
@@ -440,7 +440,7 @@ size_t fc_region_size(const fc_region_t *region) {
 void fc_region_debug_stats(const fc_region_t *region,
                            struct fc_region_debug_stats *out) {
     if (!region || !out)
-        fc_misuse("fc_region_debug_stats: NULL region or out");
+        fc_misuse("fc_region_debug_stats: nullptr region or out");
 
     struct fc_pool *pool = region->pool;
     pthread_mutex_lock(&pool->lock);

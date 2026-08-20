@@ -64,7 +64,7 @@ static char *factory(size_t descriptor_size, const void *descriptor,
     out_layout->fill_chunk = fill_chunk;
     out_layout->region_user_data = ctx;
     out_layout->destroy_user_data = destroy_user_data;
-    return NULL;
+    return nullptr;
 }
 
 struct server_thread_arg {
@@ -75,27 +75,27 @@ struct server_thread_arg {
 static void *server_thread_main(void *arg) {
     struct server_thread_arg *a = arg;
     CHECK(fc_server_run(a->server, a->conn_fd) == 0);
-    return NULL;
+    return nullptr;
 }
 
 int main(void) {
     int sv[2];
     CHECK(socketpair(AF_UNIX, SOCK_SEQPACKET, 0, sv) == 0);
 
-    fc_server_t *server = fc_server_create(factory, NULL);
-    CHECK(server != NULL);
+    fc_server_t *server = fc_server_create(factory, nullptr);
+    CHECK(server != nullptr);
 
     struct server_thread_arg arg = {server, sv[1]};
     pthread_t server_thread;
-    CHECK(pthread_create(&server_thread, NULL, server_thread_main, &arg) == 0);
+    CHECK(pthread_create(&server_thread, nullptr, server_thread_main, &arg) == 0);
 
     fc_client_pool_t *pool = fc_client_pool_create();
-    CHECK(pool != NULL);
+    CHECK(pool != nullptr);
 
     uint8_t descriptor = 0x7C;
     fc_client_region_t *region = fc_client_region_create(
-        pool, sv[0], sizeof(descriptor), &descriptor, NULL);
-    CHECK(region != NULL);
+        pool, sv[0], sizeof(descriptor), &descriptor, nullptr);
+    CHECK(region != nullptr);
 
     const uint8_t *bytes = fc_client_region_base(region);
     for (size_t i = 0; i < NCHUNKS * CHUNK_SIZE; i++)
@@ -104,7 +104,7 @@ int main(void) {
     fc_client_pool_destroy(pool); /* also covers cleanup of a still-live region */
 
     close(sv[0]); /* server thread sees EOF, fc_server_run() returns */
-    pthread_join(server_thread, NULL);
+    pthread_join(server_thread, nullptr);
     close(sv[1]);
 
     CHECK(g_destroy_calls == 0); /* not freed while the server was alive */

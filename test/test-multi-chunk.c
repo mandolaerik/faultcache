@@ -20,12 +20,12 @@ static void fill_chunk(uint32_t chunk, void *start, size_t size,
 
 int main(void) {
     fc_pool_t *pool = fc_pool_create();
-    CHECK(pool != NULL);
+    CHECK(pool != nullptr);
 
     size_t page = 4096;
     size_t sizes[NCHUNKS] = {page, page * 2, page, page * 3, page};
-    fc_region_t *region = fc_region_create(pool, NCHUNKS, sizes, fill_chunk, NULL);
-    CHECK(region != NULL);
+    fc_region_t *region = fc_region_create(pool, NCHUNKS, sizes, fill_chunk, nullptr);
+    CHECK(region != nullptr);
 
     size_t offsets[NCHUNKS];
     offsets[0] = 0;

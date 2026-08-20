@@ -39,8 +39,8 @@ static void record_and_jump(const char *what) {
             (void)(call);                                                    \
             CHECK(0 && "fc_misuse() did not fire for " #call);               \
         }                                                                    \
-        fc_debug_set_misuse_hook(NULL);                                      \
-        CHECK(strstr(g_misuse_what, needle) != NULL);                        \
+        fc_debug_set_misuse_hook(nullptr);                                      \
+        CHECK(strstr(g_misuse_what, needle) != nullptr);                        \
     } while (0)
 
 static void noop_fill_chunk(uint32_t chunk, void *start, size_t size,
@@ -52,13 +52,13 @@ static void noop_fill_chunk(uint32_t chunk, void *start, size_t size,
 }
 
 static void test_hooked_misuse_cases(void) {
-    EXPECT_MISUSE(fc_region_create(NULL, 0, NULL, NULL, NULL),
+    EXPECT_MISUSE(fc_region_create(nullptr, 0, nullptr, nullptr, nullptr),
                   "fc_region_create");
-    EXPECT_MISUSE(fc_region_base(NULL), "fc_region_base");
-    EXPECT_MISUSE(fc_region_destroy(NULL), "fc_region_destroy");
-    EXPECT_MISUSE(fc_region_size(NULL), "fc_region_size");
-    EXPECT_MISUSE(fc_region_debug_stats(NULL, NULL), "fc_region_debug_stats");
-    EXPECT_MISUSE(fc_client_region_destroy(NULL), "fc_client_region_destroy");
+    EXPECT_MISUSE(fc_region_base(nullptr), "fc_region_base");
+    EXPECT_MISUSE(fc_region_destroy(nullptr), "fc_region_destroy");
+    EXPECT_MISUSE(fc_region_size(nullptr), "fc_region_size");
+    EXPECT_MISUSE(fc_region_debug_stats(nullptr, nullptr), "fc_region_debug_stats");
+    EXPECT_MISUSE(fc_client_region_destroy(nullptr), "fc_client_region_destroy");
 }
 
 /* No hook installed here -- confirms the real default behavior (print +
@@ -67,7 +67,7 @@ static void test_default_abort_still_works(void) {
     pid_t pid = fork();
     CHECK(pid >= 0);
     if (pid == 0) {
-        fc_region_destroy(NULL);
+        fc_region_destroy(nullptr);
         _exit(0); /* unreachable if fc_misuse() really abort()s */
     }
     int status;
@@ -92,15 +92,15 @@ static void test_segv_chains_to_prior_siginfo_handler(void) {
 #else
 static void test_segv_passthrough(void) {
     fc_pool_t *pool = fc_pool_create();
-    CHECK(pool != NULL);
+    CHECK(pool != nullptr);
     size_t sizes[] = {64};
-    fc_region_t *region = fc_region_create(pool, 1, sizes, noop_fill_chunk, NULL);
-    CHECK(region != NULL);
+    fc_region_t *region = fc_region_create(pool, 1, sizes, noop_fill_chunk, nullptr);
+    CHECK(region != nullptr);
 
     pid_t pid = fork();
     CHECK(pid >= 0);
     if (pid == 0) {
-        volatile int *bad = NULL;
+        volatile int *bad = nullptr;
         *bad = 1; /* genuine fault, well outside `region` */
         _exit(0); /* unreachable */
     }
@@ -155,12 +155,12 @@ static void test_segv_chains_to_prior_siginfo_handler(void) {
         sa.sa_sigaction = prior_segv_handler;
         sa.sa_flags = SA_SIGINFO;
         sigemptyset(&sa.sa_mask);
-        CHECK(sigaction(SIGSEGV, &sa, NULL) == 0);
+        CHECK(sigaction(SIGSEGV, &sa, nullptr) == 0);
 
         fc_pool_t *pool = fc_pool_create(); /* first ever: captures ours */
-        CHECK(pool != NULL);
+        CHECK(pool != nullptr);
 
-        volatile int *bad = NULL;
+        volatile int *bad = nullptr;
         *bad = 1; /* genuine fault, well outside any region */
         _exit(1); /* unreachable */
     }
@@ -202,18 +202,18 @@ static void fill_chunk_touches_other_region(uint32_t chunk, void *start,
 static void test_nested_fault_across_regions_is_fatal(void) {
     fc_pool_t *outer_pool = fc_pool_create();
     fc_pool_t *inner_pool = fc_pool_create();
-    CHECK(outer_pool != NULL && inner_pool != NULL);
+    CHECK(outer_pool != nullptr && inner_pool != nullptr);
 
     size_t inner_size[] = {64};
     fc_region_t *inner_region = fc_region_create(inner_pool, 1, inner_size,
-                                                  noop_fill_chunk, NULL);
-    CHECK(inner_region != NULL);
+                                                  noop_fill_chunk, nullptr);
+    CHECK(inner_region != nullptr);
     g_inner_region = inner_region;
 
     size_t outer_size[] = {64};
     fc_region_t *outer_region = fc_region_create(
-        outer_pool, 1, outer_size, fill_chunk_touches_other_region, NULL);
-    CHECK(outer_region != NULL);
+        outer_pool, 1, outer_size, fill_chunk_touches_other_region, nullptr);
+    CHECK(outer_region != nullptr);
 
     pid_t pid = fork();
     CHECK(pid >= 0);
@@ -234,16 +234,16 @@ static void test_nested_fault_across_regions_is_fatal(void) {
 
 static void test_invalid_chunk_sizes(void) {
     fc_pool_t *pool = fc_pool_create();
-    CHECK(pool != NULL);
+    CHECK(pool != nullptr);
 
     size_t has_zero[] = {10, 0, 10};
     errno = 0;
-    CHECK(fc_region_create(pool, 3, has_zero, noop_fill_chunk, NULL) == NULL);
+    CHECK(fc_region_create(pool, 3, has_zero, noop_fill_chunk, nullptr) == nullptr);
     CHECK(errno == EINVAL);
 
     size_t overflows[] = {SIZE_MAX - 5, 10};
     errno = 0;
-    CHECK(fc_region_create(pool, 2, overflows, noop_fill_chunk, NULL) == NULL);
+    CHECK(fc_region_create(pool, 2, overflows, noop_fill_chunk, nullptr) == nullptr);
     CHECK(errno == EINVAL);
 
     fc_pool_destroy(pool);
@@ -254,15 +254,15 @@ static void test_invalid_chunk_sizes(void) {
 static void test_pool_destroy_not_head(void) {
     fc_pool_t *p1 = fc_pool_create();
     fc_pool_t *p2 = fc_pool_create();
-    CHECK(p1 != NULL && p2 != NULL);
+    CHECK(p1 != nullptr && p2 != nullptr);
 
     fc_pool_destroy(p1); /* p2 is head; walks past it to find p1 */
     fc_pool_destroy(p2);
-    fc_pool_destroy(NULL); /* no-op, must not crash */
+    fc_pool_destroy(nullptr); /* no-op, must not crash */
 }
 
 static void test_client_pool_destroy_null(void) {
-    fc_client_pool_destroy(NULL); /* no-op, must not crash */
+    fc_client_pool_destroy(nullptr); /* no-op, must not crash */
 }
 
 /* Descriptor too large to ever fit in a wire message: resolve_descriptor()
@@ -270,13 +270,13 @@ static void test_client_pool_destroy_null(void) {
  * descriptor at all, so this needs neither a real server nor a valid fd. */
 static void test_client_region_create_oversized_descriptor(void) {
     fc_client_pool_t *pool = fc_client_pool_create();
-    CHECK(pool != NULL);
+    CHECK(pool != nullptr);
 
     char dummy = 0;
     errno = 0;
     fc_client_region_t *region = fc_client_region_create(
-        pool, -1, SIZE_MAX / 2, &dummy, NULL);
-    CHECK(region == NULL);
+        pool, -1, SIZE_MAX / 2, &dummy, nullptr);
+    CHECK(region == nullptr);
     CHECK(errno == EMSGSIZE);
 
     fc_client_pool_destroy(pool);

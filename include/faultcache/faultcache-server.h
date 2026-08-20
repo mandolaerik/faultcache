@@ -36,7 +36,7 @@ typedef struct {
     /*
     * Called when region is destroyed.
     * Currently only when the owning fc_server_t is torn down via
-    * fc_server_destroy(), but may happen later. May be NULL if user_data
+    * fc_server_destroy(), but may happen later. May be nullptr if user_data
     * needs no cleanup.
     */
     void (*destroy_user_data)(void *region_user_data);
@@ -47,9 +47,9 @@ typedef struct {
  * once per handoff -- see faultcache-client.h), turning that descriptor
  * into an `out_layout`.
  *
- * On success, must set every field of `*out_layout` and return NULL.
+ * On success, must set every field of `*out_layout` and return nullptr.
  * To reject the descriptor, return a malloc()'d, human-readable message
- * explaining why (never NULL, which means success -- return e.g.
+ * explaining why (never nullptr, which means success -- return e.g.
  * strdup("") if there's nothing more specific to say); ownership
  * transfers to the caller (the library), which free()s it after relaying
  * it to the client's fc_client_region_create() call. This fails that
@@ -76,7 +76,7 @@ typedef struct fc_server fc_server_t;
 
 /*
  * `factory_user_data` is passed through unchanged as the factory's final
- * argument on every call. Returns NULL on failure (errno is set).
+ * argument on every call. Returns nullptr on failure (errno is set).
  * The caller retains ownership of the factory pointer and must not free it
  * until after fc_server_destroy() returns.
  */

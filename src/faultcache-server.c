@@ -51,7 +51,7 @@ struct fc_server_region {
 
     fc_fill_chunk_fn_t fill_chunk;
     void *user_data;
-    void (*destroy_user_data)(void *user_data); /* may be NULL */
+    void (*destroy_user_data)(void *user_data); /* may be nullptr */
 
     struct fc_server_mapping *mappings;
 };
@@ -145,18 +145,18 @@ static struct fc_server_region *find_region(struct fc_server *server,
         if (r->descriptor_size == descriptor_size &&
             memcmp(r->descriptor, descriptor, descriptor_size) == 0)
             return r;
-    return NULL;
+    return nullptr;
 }
 
 /*
  * Builds a brand-new region for a descriptor not seen before, by calling
  * the factory to turn it into a chunk layout plus a (fill_chunk,
- * user_data, destroy_user_data) triple. Returns NULL on failure (factory
+ * user_data, destroy_user_data) triple. Returns nullptr on failure (factory
  * rejection, an invalid layout, or OOM), in which case destroy_user_data
  * (if the factory set one) has already been invoked -- the caller never
  * needs to clean up user_data itself. On failure, *out_error is set to a
  * malloc()'d message (the factory's own, or one describing an invalid
- * layout) or left NULL if there's nothing to say; the caller owns it.
+ * layout) or left nullptr if there's nothing to say; the caller owns it.
  *
  * TODO(coverage): server.c isn't a current testing focus, so this is a
  * broad exclusion rather than a precisely-justified one per branch.
@@ -173,7 +173,7 @@ static struct fc_server_region *create_region(fc_region_factory_fn_t factory,
     if (error) {
         free(layout.chunk_sizes);
         *out_error = error;
-        return NULL;
+        return nullptr;
     }
 
     uint32_t nchunks = layout.nchunks;
@@ -195,11 +195,11 @@ static struct fc_server_region *create_region(fc_region_factory_fn_t factory,
         if (destroy_user_data)
             destroy_user_data(user_data);
         *out_error = strdup("factory returned an invalid chunk layout");
-        return NULL;
+        return nullptr;
     }
 
     struct fc_server_region *r = calloc(1, sizeof(*r));
-    void *desc_copy = descriptor_size ? malloc(descriptor_size) : NULL;
+    void *desc_copy = descriptor_size ? malloc(descriptor_size) : nullptr;
     size_t *chunk_start = malloc((size_t)(nchunks + 1) * sizeof(size_t));
     bool *resolved = calloc(nchunks, sizeof(bool));
     if (!r || (descriptor_size && !desc_copy) || !chunk_start || !resolved) {
@@ -210,7 +210,7 @@ static struct fc_server_region *create_region(fc_region_factory_fn_t factory,
         free(chunk_sizes);
         if (destroy_user_data)
             destroy_user_data(user_data);
-        return NULL;
+        return nullptr;
     }
     if (descriptor_size)
         memcpy(desc_copy, descriptor, descriptor_size);
@@ -232,7 +232,7 @@ static struct fc_server_region *create_region(fc_region_factory_fn_t factory,
         free(resolved);
         if (destroy_user_data)
             destroy_user_data(user_data);
-        return NULL;
+        return nullptr;
     }
 
     r->descriptor = desc_copy;
@@ -302,8 +302,8 @@ static int handle_resolve(struct fc_server *server, int conn_fd) {
     }
 
     struct fc_resolve_resp_hdr resp = {.status = -1, .nchunks = 0, .error_len = 0};
-    uint64_t *reply_sizes = NULL;
-    char *error = NULL;
+    uint64_t *reply_sizes = nullptr;
+    char *error = nullptr;
     if (ok) {
         const void *descriptor = buf + sizeof(req);
         pthread_mutex_lock(&server->lock);
@@ -412,7 +412,7 @@ static int handle_attach(struct fc_server *server, int ep, int conn_fd) {
         ok = (size_t)rd == sizeof(hdr) + hdr.descriptor_size;
     }
 
-    struct fc_server_mapping *m = NULL;
+    struct fc_server_mapping *m = nullptr;
     if (ok) {
         const void *descriptor = buf + sizeof(hdr);
         pthread_mutex_lock(&server->lock);
@@ -460,19 +460,19 @@ fc_server_t *fc_server_create(fc_region_factory_fn_t factory,
                                void *factory_user_data) {
     if (!factory) {
         errno = EINVAL;
-        return NULL;
+        return nullptr;
     }
     struct fc_server *s = calloc(1, sizeof(*s));
     if (!s)
-        return NULL;
+        return nullptr;
     s->factory = factory;
     s->factory_user_data = factory_user_data;
-    pthread_mutex_init(&s->lock, NULL);
+    pthread_mutex_init(&s->lock, nullptr);
     s->stop_fd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
     if (s->stop_fd < 0) {
         pthread_mutex_destroy(&s->lock);
         free(s);
-        return NULL;
+        return nullptr;
     }
     return s;
 }
@@ -542,8 +542,8 @@ int fc_server_run(fc_server_t *server, int conn_fd) {
             }
 
             pthread_mutex_lock(&server->lock);
-            struct fc_server_region *r = NULL;
-            struct fc_server_mapping *m = NULL;
+            struct fc_server_region *r = nullptr;
+            struct fc_server_mapping *m = nullptr;
             for (struct fc_server_region *rr = server->regions; rr && !m;
                  rr = rr->next) {
                 for (struct fc_server_mapping *mm = rr->mappings; mm;

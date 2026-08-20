@@ -54,8 +54,8 @@ static char *factory(size_t descriptor_size, const void *descriptor,
     out_layout->fill_chunk = fill_chunk;
     out_layout->region_user_data =
         (void *)(uintptr_t) * (const uint8_t *)descriptor;
-    out_layout->destroy_user_data = NULL;
-    return NULL;
+    out_layout->destroy_user_data = nullptr;
+    return nullptr;
 }
 
 struct server_thread_arg {
@@ -66,20 +66,20 @@ struct server_thread_arg {
 static void *server_thread_main(void *arg) {
     struct server_thread_arg *a = arg;
     CHECK(fc_server_run(a->server, a->conn_fd) == 0);
-    return NULL;
+    return nullptr;
 }
 
 static void run_server(int conn_fd_a, int conn_fd_b) {
-    fc_server_t *server = fc_server_create(factory, NULL);
-    CHECK(server != NULL);
+    fc_server_t *server = fc_server_create(factory, nullptr);
+    CHECK(server != nullptr);
 
     struct server_thread_arg arg_a = {server, conn_fd_a};
     struct server_thread_arg arg_b = {server, conn_fd_b};
     pthread_t ta, tb;
-    CHECK(pthread_create(&ta, NULL, server_thread_main, &arg_a) == 0);
-    CHECK(pthread_create(&tb, NULL, server_thread_main, &arg_b) == 0);
-    pthread_join(ta, NULL);
-    pthread_join(tb, NULL);
+    CHECK(pthread_create(&ta, nullptr, server_thread_main, &arg_a) == 0);
+    CHECK(pthread_create(&tb, nullptr, server_thread_main, &arg_b) == 0);
+    pthread_join(ta, nullptr);
+    pthread_join(tb, nullptr);
 
     fc_server_destroy(server);
     close(conn_fd_a);
@@ -108,16 +108,16 @@ int main(void) {
     close(counter_pipe[1]);
 
     fc_client_pool_t *pool = fc_client_pool_create();
-    CHECK(pool != NULL);
+    CHECK(pool != nullptr);
 
     uint8_t descriptor = 0x42; /* same descriptor on both connections */
 
     fc_client_region_t *region_a = fc_client_region_create(
-        pool, svA[0], sizeof(descriptor), &descriptor, NULL);
-    CHECK(region_a != NULL);
+        pool, svA[0], sizeof(descriptor), &descriptor, nullptr);
+    CHECK(region_a != nullptr);
     fc_client_region_t *region_b = fc_client_region_create(
-        pool, svB[0], sizeof(descriptor), &descriptor, NULL);
-    CHECK(region_b != NULL);
+        pool, svB[0], sizeof(descriptor), &descriptor, nullptr);
+    CHECK(region_b != nullptr);
     CHECK(region_a != region_b); /* distinct client-side mappings */
 
     const uint8_t *bytes_a = fc_client_region_base(region_a);

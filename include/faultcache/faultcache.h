@@ -45,7 +45,7 @@ extern "C" {
  */
 typedef struct fc_pool fc_pool_t;
 
-/* Returns NULL on failure (errno is set). */
+/* Returns nullptr on failure (errno is set). */
 fc_pool_t *fc_pool_create(void);
 
 /* Destroys the pool, tearing down any regions still alive within it. */
@@ -80,15 +80,15 @@ typedef struct fc_region fc_region_t;
  * consecutive chunks whose sizes are given by chunk_sizes[0..nchunks-1],
  * tracked by `pool`.
  *
- * `pool`/`chunk_sizes`/`fill_chunk` must be non-NULL and `nchunks` must
+ * `pool`/`chunk_sizes`/`fill_chunk` must be non-nullptr and `nchunks` must
  * be > 0 -- violating that is a caller bug, not a recoverable error,
  * and aborts the process.
  *
- * Returns an opaque handle on success, or NULL on failure (errno set to
+ * Returns an opaque handle on success, or nullptr on failure (errno set to
  * EINVAL) if chunk_sizes contains an invalid entry (zero, or one whose
  * running total overflows) -- this can happen even with correct calling
  * code. A resource allocation (malloc()/mmap()) failure currently aborts
- * the process instead of returning NULL.
+ * the process instead of returning nullptr.
  * Use fc_region_base() to get the mapping's base address (of total
  * size sum(chunk_sizes)).
  *
@@ -105,7 +105,7 @@ fc_region_t *fc_region_create(fc_pool_t *pool,
  * must not be used again afterwards (including passing it to
  * fc_region_base()/fc_region_size()): it is freed by this call.
  *
- * `region` must be a valid, live handle -- passing NULL (or reusing an
+ * `region` must be a valid, live handle -- passing nullptr (or reusing an
  * already-destroyed handle) is a caller bug, not a recoverable error,
  * and aborts the process.
  */

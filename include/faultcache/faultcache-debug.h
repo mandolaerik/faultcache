@@ -28,16 +28,16 @@ struct fc_region_debug_stats {
  * Fills *out with a snapshot of region's current fault-handling state.
  * Never triggers a fault itself. Safe to call from any thread.
  *
- * `region` and `out` must be non-NULL -- violating that is a caller
+ * `region` and `out` must be non-nullptr -- violating that is a caller
  * bug, not a recoverable error, and aborts the process.
  */
 void fc_region_debug_stats(const fc_region_t *region,
                            struct fc_region_debug_stats *out);
 
 /*
- * Overrides what happens when the library detects a caller bug (NULL/
+ * Overrides what happens when the library detects a caller bug (nullptr/
  * invalid handle, bad arguments -- see e.g. fc_region_destroy()) across
- * BOTH faultcache.h and faultcache-client.h. By default (hook == NULL)
+ * BOTH faultcache.h and faultcache-client.h. By default (hook == nullptr)
  * this prints a diagnostic to stderr and abort()s the process; tests
  * can install a hook to observe/verify a specific misuse case without
  * killing the test binary.

@@ -8,7 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-static fc_misuse_hook_t g_misuse_hook = NULL;
+static fc_misuse_hook_t g_misuse_hook = nullptr;
 
 void fc_debug_set_misuse_hook(fc_misuse_hook_t hook) {
     g_misuse_hook = hook;

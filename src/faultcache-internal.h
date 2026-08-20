@@ -42,7 +42,7 @@ void fc_misuse(const char *what);
  * declared/called when FC_COVERAGE_BUILD is defined (src/meson.build,
  * gated on -Db_coverage=true) -- a plain weak reference isn't enough to
  * pull __gcov_dump's definition out of libgcov (nothing else forces the
- * linker to resolve it, so it silently resolves to NULL and is never
+ * linker to resolve it, so it silently resolves to nullptr and is never
  * called, confirmed empirically), and a normal build must not need to
  * link libgcov at all. Not generally async-signal-safe (it does file
  * I/O), but every call site here is immediately before an

@@ -61,7 +61,7 @@ extern "C" {
 typedef struct fc_client_pool fc_client_pool_t;
 
 /* Currently aborts the process on allocation failure (rather than returning
- * NULL) */
+ * nullptr) */
 fc_client_pool_t *fc_client_pool_create(void);
 
 /* Destroys the pool, tearing down any regions still alive within it. */
@@ -84,17 +84,17 @@ typedef struct fc_client_region fc_client_region_t;
  *
  * Blocks until the server has resolved the descriptor and accepted the
  * resulting mapping, so failures are reported synchronously just like
- * fc_region_create(): returns NULL on failure (errno is set) if
+ * fc_region_create(): returns nullptr on failure (errno is set) if
  * `descriptor`/`descriptor_size` are locally invalid, or if the server
  * rejected the descriptor or the connection otherwise misbehaved
  * (reported as errno = ECONNREFUSED). A local resource allocation or
- * syscall failure currently aborts the process instead of returning NULL.
+ * syscall failure currently aborts the process instead of returning nullptr.
  *
- * If `out_error` is non-NULL, *out_error is always set: NULL if the call
+ * If `out_error` is non-nullptr, *out_error is always set: nullptr if the call
  * succeeded or no message was available, otherwise a malloc()'d,
  * human-readable string (relayed from the factory's rejection message,
  * see fc_region_factory_fn_t in faultcache-server.h) that the caller
- * must free(). Pass NULL if uninterested.
+ * must free(). Pass nullptr if uninterested.
  *
  * Returns an opaque handle on success, which must be released with
  * fc_client_region_destroy(). Use fc_client_region_base() to get the
@@ -112,7 +112,7 @@ fc_client_region_t *fc_client_region_create(fc_client_pool_t *pool,
  * fc_client_region_base()/fc_client_region_size()): it is freed by this
  * call.
  *
- * `region` must be a valid, live handle -- passing NULL (or reusing an
+ * `region` must be a valid, live handle -- passing nullptr (or reusing an
  * already-destroyed handle) is a caller bug, not a recoverable error,
  * and aborts the process.
  */

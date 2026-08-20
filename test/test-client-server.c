@@ -47,13 +47,13 @@ static char *factory(size_t descriptor_size, const void *descriptor,
     out_layout->fill_chunk = fill_chunk;
     out_layout->region_user_data =
         (void *)(uintptr_t) * (const uint8_t *)descriptor;
-    out_layout->destroy_user_data = NULL;
-    return NULL;
+    out_layout->destroy_user_data = nullptr;
+    return nullptr;
 }
 
 static void run_server(int conn_fd) {
-    fc_server_t *server = fc_server_create(factory, NULL);
-    CHECK(server != NULL);
+    fc_server_t *server = fc_server_create(factory, nullptr);
+    CHECK(server != nullptr);
     /* Returns once the client disconnects (see fc_server_run() docs). */
     CHECK(fc_server_run(server, conn_fd) == 0);
     fc_server_destroy(server);
@@ -75,12 +75,12 @@ int main(void) {
     close(sv[1]);
 
     fc_client_pool_t *pool = fc_client_pool_create();
-    CHECK(pool != NULL);
+    CHECK(pool != nullptr);
 
     uint8_t descriptor = 0xAB;
     fc_client_region_t *region = fc_client_region_create(
-        pool, sv[0], sizeof(descriptor), &descriptor, NULL);
-    CHECK(region != NULL);
+        pool, sv[0], sizeof(descriptor), &descriptor, nullptr);
+    CHECK(region != nullptr);
     CHECK(fc_client_region_size(region) == NCHUNKS * CHUNK_SIZE);
 
     const uint8_t *bytes = fc_client_region_base(region);

@@ -90,7 +90,7 @@ struct fc_client_pool {
 };
 
 static void pool_impl_init(struct fc_pool_impl *impl) {
-    pthread_mutex_init(&impl->lock, NULL);
+    pthread_mutex_init(&impl->lock, nullptr);
     impl->regions.next = impl->regions.prev = &impl->regions;
 }
 
@@ -107,7 +107,7 @@ static void pool_impl_teardown(struct fc_pool_impl *impl) {
 
 fc_client_pool_t *fc_client_pool_create(void) {
     struct fc_client_pool *pool = malloc(sizeof(*pool));
-    FC_ASSERT(pool != NULL);
+    FC_ASSERT(pool != nullptr);
     pool_impl_init(&pool->impl);
     return pool;
 }
@@ -157,9 +157,9 @@ static size_t page_ceil(size_t x, size_t page_size) {
  * `descriptor` into a chunk layout (see faultcache-server.h -- the
  * server's factory owns chunk layout now, not the caller). On success,
  * returns a malloc'd array of `*out_nchunks` chunk sizes (caller frees
- * with free()); returns NULL on failure (errno set; ECONNREFUSED if the
- * server rejected the descriptor). If `out_error` is non-NULL, *out_error
- * is always set: NULL on success or if no message was available,
+ * with free()); returns nullptr on failure (errno set; ECONNREFUSED if the
+ * server rejected the descriptor). If `out_error` is non-nullptr, *out_error
+ * is always set: nullptr on success or if no message was available,
  * otherwise a malloc()'d, NUL-terminated string (caller frees with
  * free()) from the server's rejection reply.
  */
@@ -167,16 +167,16 @@ static size_t *resolve_descriptor(int server_fd, size_t descriptor_size,
                                    const void *descriptor,
                                    uint32_t *out_nchunks, char **out_error) {
     if (out_error)
-        *out_error = NULL;
+        *out_error = nullptr;
 
     size_t total = sizeof(struct fc_resolve_req_hdr) + descriptor_size;
     if (total > FC_WIRE_MSG_MAX) {
         errno = EMSGSIZE;
-        return NULL;
+        return nullptr;
     }
 
     void *msg = malloc(total);
-    FC_ASSERT(msg != NULL);
+    FC_ASSERT(msg != nullptr);
     struct fc_resolve_req_hdr req = {
         .descriptor_size = (uint32_t)descriptor_size,
         .reserved = 0,
@@ -190,7 +190,7 @@ static size_t *resolve_descriptor(int server_fd, size_t descriptor_size,
     FC_ASSERT(sent >= 0);
 
     char *reply_buf = malloc(FC_WIRE_MSG_MAX);
-    FC_ASSERT(reply_buf != NULL);
+    FC_ASSERT(reply_buf != nullptr);
     ssize_t rd = recv(server_fd, reply_buf, FC_WIRE_MSG_MAX, 0);
     FC_ASSERT(rd >= 0);
 
@@ -209,7 +209,7 @@ static size_t *resolve_descriptor(int server_fd, size_t descriptor_size,
     if (!ok) {
         free(reply_buf);
         errno = ECONNREFUSED;
-        return NULL;
+        return nullptr;
     }
     /* GCOVR_EXCL_STOP */
     if (resp.status != 0) {
@@ -223,11 +223,11 @@ static size_t *resolve_descriptor(int server_fd, size_t descriptor_size,
         }
         free(reply_buf);
         errno = ECONNREFUSED;
-        return NULL;
+        return nullptr;
     }
 
     size_t *chunk_sizes = malloc((size_t)resp.nchunks * sizeof(size_t));
-    FC_ASSERT(chunk_sizes != NULL);
+    FC_ASSERT(chunk_sizes != nullptr);
     /* reply_buf + sizeof(resp) isn't guaranteed 8-byte aligned (sizeof(resp)
      * is no longer a multiple of 8 now that it carries error_len too), so
      * copy each size out by value rather than indexing a uint64_t* over it. */
@@ -260,7 +260,7 @@ static int send_attach(int server_fd, int uffd, const void *base,
     FC_ASSERT(total <= FC_WIRE_MSG_MAX);
 
     void *msg = malloc(total);
-    FC_ASSERT(msg != NULL);
+    FC_ASSERT(msg != nullptr);
 
     struct fc_attach_req_hdr hdr = {
         .base = (uint64_t)(uintptr_t)base,
@@ -313,7 +313,7 @@ fc_client_region_t *fc_client_region_create(fc_client_pool_t *pool,
          * bad arguments -- no test calls this with a null pool or
          * descriptor. */
         errno = EINVAL;
-        return NULL;
+        return nullptr;
         /* GCOVR_EXCL_STOP */
     }
 
@@ -322,7 +322,7 @@ fc_client_region_t *fc_client_region_create(fc_client_pool_t *pool,
                                               descriptor, &nchunks,
                                               out_error);
     if (!chunk_sizes)
-        return NULL;
+        return nullptr;
 
     size_t total_size = 0;
     for (uint32_t i = 0; i < nchunks; i++) {
@@ -332,14 +332,14 @@ fc_client_region_t *fc_client_region_create(fc_client_pool_t *pool,
              * constructs a server that sends one. */
             free(chunk_sizes);
             errno = EINVAL;
-            return NULL;
+            return nullptr;
             /* GCOVR_EXCL_STOP */
         }
         total_size += chunk_sizes[i];
     }
 
     struct fc_client_region *r = calloc(1, sizeof(*r));
-    FC_ASSERT(r != NULL);
+    FC_ASSERT(r != nullptr);
     r->memfd = -1;
 
     r->chunk_start = malloc((size_t)(nchunks + 1) * sizeof(size_t));
@@ -353,7 +353,7 @@ fc_client_region_t *fc_client_region_create(fc_client_pool_t *pool,
     }
     r->chunk_start[nchunks] = acc;
     free(chunk_sizes);
-    chunk_sizes = NULL;
+    chunk_sizes = nullptr;
 
     r->total_size = total_size;
     r->nchunks = nchunks;
@@ -366,7 +366,7 @@ fc_client_region_t *fc_client_region_create(fc_client_pool_t *pool,
     FC_ASSERT(r->memfd >= 0);
     FC_ASSERT(ftruncate(r->memfd, (off_t)r->mapped_size) == 0);
 
-    r->base = mmap(NULL, r->mapped_size, PROT_READ, MAP_SHARED, r->memfd, 0);
+    r->base = mmap(nullptr, r->mapped_size, PROT_READ, MAP_SHARED, r->memfd, 0);
     FC_ASSERT(r->base != MAP_FAILED);
 
     r->uffd = (int)syscall(SYS_userfaultfd,
@@ -406,20 +406,20 @@ fail_uffd: {
     free(r->initialized);
     free(r);
     errno = saved_errno;
-    return NULL;
+    return nullptr;
 }
     /* GCOVR_EXCL_STOP */
 }
 
 void fc_client_region_destroy(fc_client_region_t *region) {
     if (!region)
-        fc_misuse("fc_client_region_destroy: NULL region");
+        fc_misuse("fc_client_region_destroy: nullptr region");
     pool_remove(region);
     region_teardown(region);
 }
 
 const void *fc_client_region_base(const fc_client_region_t *region) {
-    return region ? region->base : NULL;
+    return region ? region->base : nullptr;
 }
 
 size_t fc_client_region_size(const fc_client_region_t *region) {

@@ -38,7 +38,7 @@ int main(void) {
     CHECK(sysconf(_SC_PAGESIZE) == 4096);
 
     fc_pool_t *pool = fc_pool_create();
-    CHECK(pool != NULL);
+    CHECK(pool != nullptr);
 
     size_t offsets[NCHUNKS];
     offsets[0] = 0;
@@ -48,8 +48,8 @@ int main(void) {
     CHECK(offsets[4] == 4096);
     CHECK(offsets[5] == 8222);
 
-    fc_region_t *region = fc_region_create(pool, NCHUNKS, sizes, fill_chunk, NULL);
-    CHECK(region != NULL);
+    fc_region_t *region = fc_region_create(pool, NCHUNKS, sizes, fill_chunk, nullptr);
+    CHECK(region != nullptr);
     const unsigned char *p = fc_region_base(region);
 
     /* Touch chunk1: must resolve chunks 0-3 (sharing page 0) in one go,

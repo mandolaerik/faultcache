@@ -30,8 +30,8 @@ static char *factory(size_t descriptor_size, const void *descriptor,
 }
 
 static void run_server(int conn_fd) {
-    fc_server_t *server = fc_server_create(factory, NULL);
-    CHECK(server != NULL);
+    fc_server_t *server = fc_server_create(factory, nullptr);
+    CHECK(server != nullptr);
     CHECK(fc_server_run(server, conn_fd) == 0);
     fc_server_destroy(server);
     close(conn_fd);
@@ -52,15 +52,15 @@ int main(void) {
     close(sv[1]);
 
     fc_client_pool_t *pool = fc_client_pool_create();
-    CHECK(pool != NULL);
+    CHECK(pool != nullptr);
 
     uint8_t descriptor = 0xFF;
-    char *error = NULL;
+    char *error = nullptr;
     fc_client_region_t *region = fc_client_region_create(
         pool, sv[0], sizeof(descriptor), &descriptor, &error);
-    CHECK(region == NULL);
+    CHECK(region == nullptr);
     CHECK(errno == ECONNREFUSED);
-    CHECK(error != NULL);
+    CHECK(error != nullptr);
     CHECK(strcmp(error, "descriptor rejected: unknown fill value") == 0);
     free(error);
 

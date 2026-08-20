@@ -4,7 +4,7 @@
 project('faultcache', 'c',
   version: '0.1.0',
   license: 'MPL-2.0',
-  default_options: ['c_std=gnu11', 'warning_level=3', 'werror=true'])
+  default_options: ['c_std=gnu2x', 'warning_level=3', 'werror=true'])
 
 if host_machine.system() != 'linux'
   error('faultcache relies on Linux userfaultfd(2) and only builds on Linux')

@@ -19,11 +19,11 @@ static void fill_chunk(uint32_t chunk, void *start, size_t size,
 
 int main(void) {
     fc_pool_t *pool = fc_pool_create();
-    CHECK(pool != NULL);
+    CHECK(pool != nullptr);
 
     size_t sizes[] = {4096, 8192};
-    fc_region_t *region = fc_region_create(pool, 2, sizes, fill_chunk, NULL);
-    CHECK(region != NULL);
+    fc_region_t *region = fc_region_create(pool, 2, sizes, fill_chunk, nullptr);
+    CHECK(region != nullptr);
     CHECK(fc_region_size(region) == 4096 + 8192);
     const void *base = fc_region_base(region);
     CHECK(((const unsigned char *)base)[0] == 'Z');

@@ -21,11 +21,11 @@ static void fill_chunk(uint32_t chunk, void *start, size_t size,
 
 int main(void) {
     fc_pool_t *pool = fc_pool_create();
-    CHECK(pool != NULL);
+    CHECK(pool != nullptr);
 
     size_t sizes[] = {4096 * 3 + 17};
-    fc_region_t *region = fc_region_create(pool, 1, sizes, fill_chunk, NULL);
-    CHECK(region != NULL);
+    fc_region_t *region = fc_region_create(pool, 1, sizes, fill_chunk, nullptr);
+    CHECK(region != nullptr);
     CHECK(fc_region_size(region) == sizes[0]);
 
     const unsigned char *p = fc_region_base(region);
