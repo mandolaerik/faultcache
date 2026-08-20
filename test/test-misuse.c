@@ -87,6 +87,8 @@ static void test_default_abort_still_works(void) {
 #if defined(__SANITIZE_ADDRESS__)
 static void test_segv_passthrough(void) {
 }
+static void test_segv_chains_to_prior_siginfo_handler(void) {
+}
 #else
 static void test_segv_passthrough(void) {
     fc_pool_t *pool = fc_pool_create();
@@ -111,7 +113,70 @@ static void test_segv_passthrough(void) {
      * fc_pool_destroy()'s "clean up any regions still alive" path. */
     fc_pool_destroy(pool);
 }
+
+static int g_prior_handler_pipe_wr;
+
+static void prior_segv_handler(int sig, siginfo_t *info, void *ucontext) {
+    (void)sig;
+    (void)info;
+    (void)ucontext;
+    char c = 'x';
+    ssize_t ignored = write(g_prior_handler_pipe_wr, &c, 1);
+    (void)ignored;
+    /* Restore default disposition and return: the kernel retries the
+     * faulting instruction, raising SIGSEGV for real against SIG_DFL --
+     * proves this is a genuine chain, not a swallow. */
+    signal(SIGSEGV, SIG_DFL);
+}
+
+/* If a SA_SIGINFO SIGSEGV handler was already installed before
+ * faultcache's own (e.g. another library's crash handler), a genuine
+ * fault outside any region must chain to *that* handler, not just fall
+ * through to the default disposition -- see the SA_SIGINFO branch in
+ * segv_handler()'s "not one of ours" tail.
+ *
+ * Must run before any other test's first fc_pool_create() call:
+ * faultcache installs its own handler exactly once per process (via
+ * pthread_once) and captures whatever was in effect at that moment as
+ * the "prior" disposition to chain to. Everything below happens inside
+ * a forked child so that this one-time capture happens there (with our
+ * handler already installed) rather than in the shared test process. */
+static void test_segv_chains_to_prior_siginfo_handler(void) {
+    int pipefd[2];
+    CHECK(pipe(pipefd) == 0);
+
+    pid_t pid = fork();
+    CHECK(pid >= 0);
+    if (pid == 0) {
+        close(pipefd[0]);
+        g_prior_handler_pipe_wr = pipefd[1];
+
+        struct sigaction sa = {0};
+        sa.sa_sigaction = prior_segv_handler;
+        sa.sa_flags = SA_SIGINFO;
+        sigemptyset(&sa.sa_mask);
+        CHECK(sigaction(SIGSEGV, &sa, NULL) == 0);
+
+        fc_pool_t *pool = fc_pool_create(); /* first ever: captures ours */
+        CHECK(pool != NULL);
+
+        volatile int *bad = NULL;
+        *bad = 1; /* genuine fault, well outside any region */
+        _exit(1); /* unreachable */
+    }
+    close(pipefd[1]);
+
+    char c = 0;
+    CHECK(read(pipefd[0], &c, 1) == 1); /* prior handler really ran */
+    close(pipefd[0]);
+
+    int status;
+    CHECK(waitpid(pid, &status, 0) == pid);
+    CHECK(WIFSIGNALED(status));
+    CHECK(WTERMSIG(status) == SIGSEGV);
+}
 #endif
+
 
 
 static fc_region_t *g_inner_region;
@@ -218,6 +283,11 @@ static void test_client_region_create_oversized_descriptor(void) {
 }
 
 int main(void) {
+    /* Must run first: captures our handler as faultcache's "prior
+     * disposition" via install_handler()'s one-time pthread_once, before
+     * any other test's fc_pool_create() call does so with the default
+     * disposition instead. */
+    test_segv_chains_to_prior_siginfo_handler();
     test_hooked_misuse_cases();
     test_invalid_chunk_sizes();
     test_pool_destroy_not_head();
