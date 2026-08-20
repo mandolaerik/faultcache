@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MPL-2.0
 
 py_mod = import('python')
-py = py_mod.find_installation('python3', required: false)
+py = py_mod.find_installation(get_option('python'), required: false)
 
 faultcache_shim = disabler()
 shim_build_dir = meson.current_build_dir()

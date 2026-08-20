@@ -7,42 +7,30 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Every job below does checkout + toolchain only, then hands off to
+# scripts/ci.py, which owns build dirs, configure flags, sanitizer options
+# and the coverage gate - and can be run locally the same way.
+# ninja is preinstalled on the runner image; meson and gcovr come from pip
+# (faster than apt); zlib and the Python headers have to come from apt.
+
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - name: default
-            build_dir: build
-            setup_args: ""
-          - name: asan
-            build_dir: build-asan
-            setup_args: "-Db_sanitize=address,undefined"
-    name: ${{ matrix.name }}
-    env:
-      # abort_on_error=1: some tests deliberately trigger a real SIGSEGV and
-      # assert the process dies via signal (WIFSIGNALED); ASan's default of
-      # exiting normally after reporting would fail that check.
-      ASAN_OPTIONS: detect_leaks=1,abort_on_error=1
-      UBSAN_OPTIONS: print_stacktrace=1,halt_on_error=1
+        lane: [default, asan, coverage]
+    name: ${{ matrix.lane }}
     steps:
       - uses: actions/checkout@v4
 
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y meson ninja-build zlib1g-dev python3-dev
+          sudo apt-get install -y zlib1g-dev python3-dev
+          pip install --disable-pip-version-check meson gcovr
 
-      - name: meson setup
-        run: meson setup ${{ matrix.build_dir }} ${{ matrix.setup_args }}
-
-      - name: Build
-        run: ninja -C ${{ matrix.build_dir }}
-
-      - name: Test
-        run: meson test -C ${{ matrix.build_dir }} --print-errorlogs
+      - run: python3 scripts/ci.py ${{ matrix.lane }}
 
   python-bindings:
     runs-on: ubuntu-latest
@@ -50,15 +38,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Floor deliberately matches the Py_LIMITED_API level the callback
-          # shim targets, so CI actually proves the abi3 range we claim.
+          # Mirrors PYTHONS in scripts/ci.py; GitHub needs the matrix spelled
+          # out statically to fan the jobs out.
           - python-version: "3.10"
             experimental: false
           - python-version: "3.13"
             experimental: false
-          # Free-threaded build: informational only until the C shim exists
-          # and can declare Py_mod_gil. See TODO.md before promoting this to
-          # a blocking lane.
+          # Free-threaded build: informational until the shim declares
+          # Py_mod_gil. See TODO.md before promoting this to a blocking lane.
           - python-version: "3.14t"
             experimental: true
     name: python ${{ matrix.python-version }}
@@ -66,6 +53,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The one thing the script can't do itself: install an interpreter that
+      # isn't on the runner. ci.py then finds it by version.
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
@@ -73,42 +62,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y meson ninja-build zlib1g-dev
+          sudo apt-get install -y zlib1g-dev
+          pip install --disable-pip-version-check meson
 
-      # meson resolves find_program('python3') from PATH, which setup-python
-      # has already pointed at the matrix version.
-      - name: meson setup
-        run: |
-          python3 --version
-          meson setup build
-
-      - name: Build
-        run: ninja -C build
-
-      - name: Test
-        run: meson test -C build test_python_bindings --print-errorlogs
-
-  coverage:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y meson ninja-build zlib1g-dev python3-dev gcovr
-
-      - name: meson setup
-        run: meson setup build-coverage -Db_coverage=true
-
-      - name: Build
-        run: ninja -C build-coverage
-
-      - name: Test
-        run: meson test -C build-coverage --print-errorlogs
-
-      # src/ is gated at 100% line coverage; genuinely untestable/deprioritized
-      # lines are marked GCOVR_EXCL. examples/ and test/ aren't held to the
-      # same bar, so they're excluded from this gate.
-      - name: Coverage (src/ must be 100% line coverage)
-        run: gcovr --root . --filter 'src/.*\.c$' --fail-under-line 100 --print-summary build-coverage
+      - run: python3 scripts/ci.py python:${{ matrix.python-version }}
