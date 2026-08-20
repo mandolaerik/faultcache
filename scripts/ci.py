@@ -70,10 +70,10 @@ LANES = {
 }
 
 # Interpreters the bindings are supported on; the workflow matrix mirrors
-# this list. 3.10 is the Py_LIMITED_API level the shim targets, so CI proves
-# the abi3 floor we claim. No free-threaded entry: CPython rejects the
-# limited API there outright.
-PYTHONS = ["3.10", "3.13"]
+# this list. 3.10 is the Py_LIMITED_API level the shim targets and 3.14 the
+# newest release, so CI proves both ends of the abi3 range we claim. No
+# free-threaded entry: CPython rejects the limited API there outright.
+PYTHONS = ["3.10", "3.14"]
 
 ALL = [*LANES, *(f"python:{v}" for v in PYTHONS)]
 
