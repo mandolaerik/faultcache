@@ -44,6 +44,50 @@ jobs:
       - name: Test
         run: meson test -C ${{ matrix.build_dir }} --print-errorlogs
 
+  python-bindings:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Floor deliberately matches the Py_LIMITED_API level the callback
+          # shim targets, so CI actually proves the abi3 range we claim.
+          - python-version: "3.10"
+            experimental: false
+          - python-version: "3.13"
+            experimental: false
+          # Free-threaded build: informational only until the C shim exists
+          # and can declare Py_mod_gil. See TODO.md before promoting this to
+          # a blocking lane.
+          - python-version: "3.14t"
+            experimental: true
+    name: python ${{ matrix.python-version }}
+    continue-on-error: ${{ matrix.experimental }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y meson ninja-build zlib1g-dev
+
+      # meson resolves find_program('python3') from PATH, which setup-python
+      # has already pointed at the matrix version.
+      - name: meson setup
+        run: |
+          python3 --version
+          meson setup build
+
+      - name: Build
+        run: ninja -C build
+
+      - name: Test
+        run: meson test -C build test_python_bindings --print-errorlogs
+
   coverage:
     runs-on: ubuntu-latest
     steps:
