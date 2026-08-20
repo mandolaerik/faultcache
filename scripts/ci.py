@@ -71,9 +71,9 @@ LANES = {
 
 # Interpreters the bindings are supported on; the workflow matrix mirrors
 # this list. 3.10 is the Py_LIMITED_API level the shim targets, so CI proves
-# the abi3 floor we claim. 3.14t is free-threaded and non-blocking for now -
-# see TODO.md before promoting it.
-PYTHONS = ["3.10", "3.13", "3.14t"]
+# the abi3 floor we claim. No free-threaded entry: CPython rejects the
+# limited API there outright.
+PYTHONS = ["3.10", "3.13"]
 
 ALL = [*LANES, *(f"python:{v}" for v in PYTHONS)]
 
@@ -96,10 +96,7 @@ def run(cmd, env=None, out=None):
 
 
 def interpreter_tag(exe):
-    """Return e.g. "3.12" or "3.14t" for exe, or None if it won't run.
-
-    The 't' suffix is how CPython spells a free-threaded build, and
-    --version doesn't show it, so ask sysconfig instead of parsing.
+    """Return e.g. "3.12" for exe, or None if it won't run.
     """
     probe = ("import json,sys,sysconfig;"
              "print(json.dumps([sys.version_info[0], sys.version_info[1],"
@@ -110,7 +107,10 @@ def interpreter_tag(exe):
     except (OSError, subprocess.SubprocessError):
         return None
     major, minor, freethreaded = json.loads(out)
-    return f"{major}.{minor}{'t' if freethreaded else ''}"
+    # free-threaded not yet supported -- as of 3.14, incompatible with Python's
+    # stable ABI
+    assert not freethreaded
+    return f"{major}.{minor}"
 
 
 def resolve_interpreter(spec):
@@ -125,7 +125,7 @@ def resolve_interpreter(spec):
 
     # python3.14t if it exists, else python3.14, else whatever python3 is -
     # which is what actions/setup-python repoints. The tag check decides.
-    seen = dict.fromkeys([f"python{spec}", f"python{spec.rstrip('t')}",
+    seen = dict.fromkeys([f"python{spec}", f"python{spec}",
                           "python3"])
     for candidate in seen:
         exe = shutil.which(candidate)
