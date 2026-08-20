@@ -15,13 +15,15 @@ fill_chunk callback - unaccessed chunks are never touched.
 Region.view() returns a zero-copy memoryview instead of a bytes copy - see
 its docstring for important lifetime/safety caveats.
 
+fill_chunk runs inside a SIGSEGV handler and is subject to real
+restrictions - see Region's docstring before writing one.
+
 Env var FAULTCACHE_LIBRARY overrides the shared library path/name used to
 locate libfaultcache (useful to point at a build directory before install).
 """
 import ctypes
 import ctypes.util
 import os
-import traceback
 import weakref
 from typing import Callable, NamedTuple, Optional, Sequence, Union
 
@@ -48,9 +50,15 @@ def _load_library() -> ctypes.CDLL:
 
 _lib = _load_library()
 
-_FillChunkFn = ctypes.CFUNCTYPE(
-    None, ctypes.c_uint32, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_void_p
-)
+try:
+    import _faultcache as _shim
+except ImportError as exc:
+    # No pure-ctypes fallback on purpose: a ctypes callback cannot suppress
+    # the cyclic collector around fill_chunk, and fill_chunk runs inside a
+    # SIGSEGV handler where a GC pass can be fatal (see TODO.md section 1).
+    raise ImportError(
+        "faultcache requires its compiled callback shim (_faultcache)"
+    ) from exc
 
 _lib.fc_pool_create.argtypes = []
 _lib.fc_pool_create.restype = ctypes.c_void_p
@@ -62,7 +70,7 @@ _lib.fc_region_create.argtypes = [
     ctypes.c_void_p,
     ctypes.c_uint32,
     ctypes.POINTER(ctypes.c_size_t),
-    _FillChunkFn,
+    ctypes.c_void_p,  # fc_fill_chunk_fn_t, built by the shim
     ctypes.c_void_p,
 ]
 _lib.fc_region_create.restype = ctypes.c_void_p
@@ -105,7 +113,39 @@ FillChunkFn = Callable[[int, memoryview], None]
 
 
 class Region:
-    """A read-only, lazily-populated byte range. Create via Pool.Region()."""
+    """A read-only, lazily-populated byte range. Create via Pool.Region().
+
+    The fill_chunk callback
+    ~~~~~~~~~~~~~~~~~~~~~~~
+    ``fill_chunk(chunk_index, buf)`` must fill ``buf`` (a writable
+    memoryview of exactly that chunk's size) with the chunk's bytes. It is
+    called from inside a SIGSEGV handler, on whichever thread touched the
+    memory, so two invariants apply:
+
+    1. ``buf`` is valid ONLY for the duration of the call. It points into a
+       scratch mapping that gets moved into place - and thereby unmapped -
+       as soon as fill_chunk returns. The view is released for you, so a
+       retained one raises ValueError instead of corrupting memory.
+
+    2. Nothing reachable from fill_chunk may read an unresolved part of any
+       Region of any Pool. That faults again while the handler is still
+       running, which faultcache reports and aborts on; it cannot be
+       recovered from. The trap is that "reachable" includes code you never
+       call directly: a ``__del__`` or ``weakref.finalize`` callback on an
+       object whose last reference happens to go away during the fill.
+
+       The cyclic collector is suppressed for the duration of the call, so
+       unrelated garbage can no longer be finalized at an arbitrary
+       allocation point. Refcount-driven finalization cannot be deferred by
+       CPython and still fires immediately. A sufficient rule that avoids
+       all of it: don't let fill_chunk drop the last reference to anything
+       but its own locals - no clearing shared containers, no rebinding
+       attributes, no closing objects.
+
+    Exceptions cannot cross the handler boundary: one raised out of
+    fill_chunk is reported via sys.unraisablehook, and the fault is
+    resolved with whatever was written before it raised.
+    """
 
     def __init__(self, pool: "Pool", chunk_sizes: Sequence[int],
                  fill_chunk: FillChunkFn):
@@ -115,25 +155,12 @@ class Region:
         n = len(chunk_sizes)
         sizes_arr = (ctypes.c_size_t * n)(*chunk_sizes)
 
-        def trampoline(chunk, start, size, _user_data):
-            buf = (ctypes.c_uint8 * size).from_address(start)
-            # cast() drops the '<' byte-order prefix ctypes attaches to the
-            # format string; memoryview's slice-assignment fast path only
-            # accepts unprefixed single-byte formats.
-            view = memoryview(buf).cast('B')
-            try:
-                fill_chunk(chunk, view)
-            except Exception:
-                # Can't propagate across the C callback boundary; the fault
-                # is still resolved with whatever fill_chunk wrote (if
-                # anything) before raising.
-                traceback.print_exc()
+        # The capsule owns the callable and must outlive the region: it is
+        # what fill_chunk_addr/user_data point into.
+        self._filler, fill_fn, user_data = _shim.make_filler(fill_chunk)
 
-        # Kept alive on self: ctypes does not keep the trampoline/closure
-        # alive on the C side, only the CFUNCTYPE wrapper object matters.
-        self._cb = _FillChunkFn(trampoline)
-
-        region = _lib.fc_region_create(pool._handle, n, sizes_arr, self._cb, None)
+        region = _lib.fc_region_create(pool._handle, n, sizes_arr, fill_fn,
+                                       user_data)
         if not region:
             errno = ctypes.get_errno()
             raise OSError(errno, os.strerror(errno))

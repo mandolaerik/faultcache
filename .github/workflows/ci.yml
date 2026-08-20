@@ -33,7 +33,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y meson ninja-build zlib1g-dev
+          sudo apt-get install -y meson ninja-build zlib1g-dev python3-dev
 
       - name: meson setup
         run: meson setup ${{ matrix.build_dir }} ${{ matrix.setup_args }}
@@ -96,7 +96,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y meson ninja-build zlib1g-dev gcovr
+          sudo apt-get install -y meson ninja-build zlib1g-dev python3-dev gcovr
 
       - name: meson setup
         run: meson setup build-coverage -Db_coverage=true

@@ -14,5 +14,6 @@ thread_dep = dependency('threads')
 inc = include_directories('include')
 
 subdir('src')
+subdir('python')
 subdir('test')
 subdir('examples')

@@ -4,6 +4,7 @@
 """Exercises the ctypes bindings in python/faultcache against libfaultcache."""
 import os
 import sys
+import traceback
 
 import faultcache
 
@@ -233,6 +234,186 @@ def test_view_blocks_close():
         assert region.closed
 
 
+def test_gc_is_suppressed_during_fill():
+    """Deterministic reproducer for the cyclic-GC reentrancy hazard.
+
+    A finalizer sitting on *cyclic* garbage (refcounting alone can never
+    free it, only the cyclic collector) reads a still-unresolved region.
+    Allocating past gen0's threshold inside fill_chunk forces that
+    collector to run on the faulting thread while it is still inside the
+    SIGSEGV handler, so the finalizer faults again -> nested fault -> fatal.
+
+    Determinism comes from gc.collect() zeroing gen0's counter immediately
+    before the cycle is built (so nothing collects it too early) and from
+    fill_chunk then allocating several times the threshold.
+
+    Without the C shim's PyGC_Disable this kills the child with SIGABRT.
+    The child also checks that the collector is back on afterwards and that
+    the cycle really was collectable, so the test cannot pass merely
+    because the reproducer went stale.
+    """
+    import gc
+
+    read_fd, write_fd = os.pipe()
+    pid = os.fork()
+    if pid == 0:
+        os.close(read_fd)
+        os.dup2(write_fd, 2)
+        try:
+            def victim_fill(chunk, buf):
+                buf[:] = b"V" * len(buf)
+
+            def trigger_fill(chunk, buf):
+                buf[:] = b"T" * len(buf)
+                junk = [[] for _ in range(gc.get_threshold()[0] * 3)]
+                junk.clear()
+
+            pool = faultcache.Pool()
+            victim = pool.Region([PAGE], victim_fill)
+            trigger = pool.Region([PAGE], trigger_fill)
+
+            gc.collect()
+
+            touched = []
+
+            class Toucher:
+                def __init__(self):
+                    self.loop = self
+
+                def __del__(self):
+                    touched.append(victim[0])  # faults if still unresolved
+
+            Toucher()  # dropped, but self-referential: only gc can free it
+
+            trigger[0]
+
+            assert gc.isenabled(), "fill_chunk left the collector disabled"
+            gc.collect()
+            assert touched, "the cycle was never collected; test went stale"
+            os._exit(0)
+        except BaseException:
+            traceback.print_exc()
+            os._exit(1)
+
+    os.close(write_fd)
+    with os.fdopen(read_fd, "rb") as f:
+        err = f.read()
+    _, status = os.waitpid(pid, 0)
+
+    assert not os.WIFSIGNALED(status), (
+        f"a GC pass inside fill_chunk reached the unresolved region "
+        f"(signal {os.WTERMSIG(status)}, stderr={err!r})")
+    assert os.WEXITSTATUS(status) == 0, (
+        f"child failed (exit {os.WEXITSTATUS(status)}), stderr={err!r}")
+
+
+def test_refcount_finalizer_during_fill_touching_region_is_fatal():
+    """Pins the tighter boundary the GC suppression deliberately stops at.
+
+    PyGC_Disable() only silences the cyclic collector. A refcount reaching
+    zero inside fill_chunk still runs __del__/weakref callbacks right
+    there, and CPython offers no way to defer those - so the documented
+    rule is the stricter "fill_chunk must not drop the last reference to
+    anything but its own locals", not merely "must not read a region".
+
+    This asserts the violation stays loud: faultcache's own nested-fault
+    diagnostic plus SIGABRT, never a silent crash or corruption.
+    """
+    import signal
+
+    read_fd, write_fd = os.pipe()
+    pid = os.fork()
+    if pid == 0:
+        os.close(read_fd)
+        os.dup2(write_fd, 2)
+        try:
+            def victim_fill(chunk, buf):
+                buf[:] = b"V" * len(buf)
+
+            holder = []
+
+            def trigger_fill(chunk, buf):
+                buf[:] = b"T" * len(buf)
+                holder.clear()  # last reference -> __del__ runs right here
+
+            pool = faultcache.Pool()
+            victim = pool.Region([PAGE], victim_fill)
+            trigger = pool.Region([PAGE], trigger_fill)
+
+            class Toucher:
+                def __del__(self):
+                    victim[0]  # unresolved -> faults
+
+            holder.append(Toucher())
+
+            trigger[0]
+            os._exit(0)  # must not be reached
+        except BaseException:
+            traceback.print_exc()
+            os._exit(1)
+
+    os.close(write_fd)
+    with os.fdopen(read_fd, "rb") as f:
+        err = f.read()
+    _, status = os.waitpid(pid, 0)
+
+    assert os.WIFSIGNALED(status), (
+        f"a finalizer run inside fill_chunk did not reach the unresolved "
+        f"region (status={status}, stderr={err!r})")
+    assert os.WTERMSIG(status) == signal.SIGABRT, (
+        f"died from {os.WTERMSIG(status)}, not faultcache's own diagnosed "
+        f"abort (stderr={err!r})")
+    assert b"faultcache: misuse" in err, (
+        f"crashed without faultcache's nested-fault diagnostic: {err!r}")
+
+
+def test_fill_buffer_is_invalidated_after_fill_returns():
+    """fill_chunk's buffer must stop working once the callback returns.
+
+    The buffer fill_chunk receives points into the scratch mapping that
+    resolve_fault_locked() mremap()s into place - which unmaps it. Reading
+    a retained view would dereference an unmapped address (verified pre-fix:
+    SIGSEGV, no diagnostic) and, since the buffer is writable, silently
+    corrupt whatever gets mapped there later. The shim release()s the
+    memoryview once fill_chunk returns, turning this into a ValueError.
+    """
+    read_fd, write_fd = os.pipe()
+    pid = os.fork()
+    if pid == 0:
+        os.close(read_fd)
+        os.dup2(write_fd, 2)
+        stash = []
+
+        def fill_chunk(chunk, buf):
+            stash.append(buf)
+            buf[:] = b"S" * len(buf)
+
+        try:
+            with faultcache.Pool() as pool:
+                region = pool.Region([PAGE], fill_chunk)
+                assert region[0] == ord('S')
+                try:
+                    bytes(stash[0][:4])
+                except ValueError:
+                    os._exit(0)
+                os._exit(2)
+        except BaseException:
+            traceback.print_exc()
+            os._exit(1)
+
+    os.close(write_fd)
+    with os.fdopen(read_fd, "rb") as f:
+        err = f.read()
+    _, status = os.waitpid(pid, 0)
+
+    assert not os.WIFSIGNALED(status), (
+        f"retained fill_chunk buffer still dereferences the unmapped scratch "
+        f"page (died from signal {os.WTERMSIG(status)})")
+    code = os.WEXITSTATUS(status)
+    assert code != 2, "retained fill_chunk buffer was still readable"
+    assert code == 0, f"unexpected failure (exit {code}), stderr={err!r}"
+
+
 def main():
     tests = [
         test_pool_maxsize_not_implemented,
@@ -246,6 +427,9 @@ def main():
         test_pool_close_closes_regions,
         test_write_is_fatal,
         test_access_after_unmap_is_fatal,
+        test_gc_is_suppressed_during_fill,
+        test_refcount_finalizer_during_fill_touching_region_is_fatal,
+        test_fill_buffer_is_invalidated_after_fill_returns,
     ]
     for t in tests:
         t()
