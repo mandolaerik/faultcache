@@ -216,15 +216,6 @@ static void resolve_fault_locked(struct fc_region *r, size_t fault_off) {
  * shape (an interval tree would help if this ever shows up as hot;
  * not needed yet -- see TODO.md).
  */
-/*
- * Tests exercise this (test_segv_passthrough in test-misuse.c) by
- * forking and causing a genuine crash outside any region, but that
- * child process necessarily terminates via a signal rather than a
- * normal exit() -- gcov only flushes counters at normal exit, so the
- * lines reached only from inside such a crash (this function, and the
- * "not one of ours" tail of segv_handler() below) never show as
- * covered despite genuinely running. GCOVR_EXCL_START
- */
 static struct fc_region *find_region_locked(struct fc_pool *pool,
                                              uintptr_t addr) {
     for (struct fc_region *r = pool->regions.next; r != &pool->regions;
@@ -235,7 +226,6 @@ static struct fc_region *find_region_locked(struct fc_pool *pool,
     }
     return NULL;
 }
-/* GCOVR_EXCL_STOP */
 
 static void segv_handler(int sig, siginfo_t *info, void *ucontext) {
     int saved_errno = errno;
@@ -252,17 +242,19 @@ static void segv_handler(int sig, siginfo_t *info, void *ucontext) {
          * restored first since fc_misuse()'s default path calls
          * fprintf().
          *
-         * Tested (test_nested_fault_is_fatal in test-misuse.c forks and
-         * triggers this for real), but that child necessarily terminates
-         * via fc_misuse()'s abort() rather than a normal exit() -- gcov
-         * only flushes counters at normal exit, so these lines never
-         * show as covered despite genuinely running. GCOVR_EXCL_START */
+         * Tested via test_nested_fault_across_regions_is_fatal
+         * (test-misuse.c), which forks and triggers this for real; the
+         * child terminates via fc_misuse()'s abort(), which flushes
+         * coverage counters itself before dying (see
+         * fc_flush_coverage_before_death()). */
         errno = saved_errno;
         fc_misuse("fault raised while fill_chunk() was still resolving "
                   "another fault -- nested/recursive faults are not "
                   "supported");
-        return;
-        /* GCOVR_EXCL_STOP */
+        return; /* GCOVR_EXCL_LINE: only reached if a misuse hook survives
+                 * fc_misuse() instead of the default abort() -- no test
+                 * installs a surviving hook for this call site (would
+                 * mean longjmp'ing out of a signal handler). */
     }
 
     pthread_mutex_lock(&g_pools_lock);
@@ -286,26 +278,27 @@ static void segv_handler(int sig, siginfo_t *info, void *ucontext) {
                 return; /* retry the faulting instruction */
             }
         }
-        pthread_mutex_unlock(&pool->lock); /* GCOVR_EXCL_LINE: see below */
+        pthread_mutex_unlock(&pool->lock);
     }
-    pthread_mutex_unlock(&g_pools_lock); /* GCOVR_EXCL_LINE */
-    errno = saved_errno;                 /* GCOVR_EXCL_LINE */
+    pthread_mutex_unlock(&g_pools_lock);
+    errno = saved_errno;
 
     /* Not one of ours -- a genuine fault. Restore whatever disposition
      * was in effect before we installed ours (rather than silently
-     * swallowing real crashes) and chain to it.
-     *
-     * Tested (test_segv_passthrough in test-misuse.c forks and crashes
-     * for real outside any region), but that child necessarily
-     * terminates via a signal rather than a normal exit() -- gcov only
-     * flushes counters at normal exit, so these lines never show as
-     * covered despite genuinely running. GCOVR_EXCL_START */
+     * swallowing real crashes) and chain to it. Flush coverage last,
+     * after the chain attempt: from here the process either dies
+     * inside the old handler, or returns and the kernel retries the
+     * faulting instruction against the now-restored disposition -- either
+     * way, no application code runs again, so this is the last chance to
+     * flush counters for the lines below (a dump placed before them
+     * would miss their counters, since gcov only credits a line once
+     * its block is actually entered). */
     sigaction(sig, &g_old_action, NULL);
     if ((g_old_action.sa_flags & SA_SIGINFO) && g_old_action.sa_sigaction)
         g_old_action.sa_sigaction(sig, info, ucontext);
     /* else: default/ignore disposition is now restored; returning lets
      * the faulting instruction retry, which raises against it for real. */
-    /* GCOVR_EXCL_STOP */
+    fc_flush_coverage_before_death();
 }
 
 static void install_handler(void) {
