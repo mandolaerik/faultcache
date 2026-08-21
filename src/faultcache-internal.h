@@ -57,4 +57,15 @@ static inline void fc_flush_coverage_before_death(void) {
 }
 #endif
 
+#if defined(__GNUC__) || defined(__clang__)
+#define FC_DIAG_PUSH _Pragma("GCC diagnostic push")
+#define FC_DIAG_POP _Pragma("GCC diagnostic pop")
+#define FC_DIAG_IGNORE_NONNULL_COMPARE \
+    _Pragma("GCC diagnostic ignored \"-Wnonnull-compare\"")
+#else
+#define FC_DIAG_PUSH
+#define FC_DIAG_POP
+#define FC_DIAG_IGNORE_NONNULL_COMPARE
+#endif
+
 #endif

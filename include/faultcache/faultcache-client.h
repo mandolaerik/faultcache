@@ -109,7 +109,7 @@ fc_client_region_t *fc_client_region_create(fc_client_pool_t *pool,
                                              int server_fd,
                                              size_t descriptor_size,
                                              const void *descriptor,
-                                             char **out_error);
+                                             char **out_error) FC_NOTNULL(1);
 
 /*
  * Release a mapping previously returned by fc_client_region_create().
@@ -121,17 +121,20 @@ fc_client_region_t *fc_client_region_create(fc_client_pool_t *pool,
  * already-destroyed handle) is a caller bug, not a recoverable error,
  * and aborts the process.
  */
-void fc_client_region_destroy(fc_client_region_t *region);
+void fc_client_region_destroy(fc_client_region_t *region) FC_NOTNULL(1);
 
 /* The region's mapped base address (of total size
  * fc_client_region_size() bytes) -- may be dereferenced/read directly;
  * writes fault fatally. Valid for as long as `region` itself is (i.e.
- * until fc_client_region_destroy()). */
-const void *fc_client_region_base(const fc_client_region_t *region);
+ * until fc_client_region_destroy()). `region` must be a valid, live
+ * handle -- passing nullptr is caller misuse and aborts the process. */
+const void *fc_client_region_base(const fc_client_region_t *region)
+    FC_NOTNULL(1);
 
 /* Total size in bytes of a mapping previously returned by
- * fc_client_region_create(). */
-size_t fc_client_region_size(const fc_client_region_t *region);
+ * fc_client_region_create(). `region` must be a valid, live handle --
+ * passing nullptr is caller misuse and aborts the process. */
+size_t fc_client_region_size(const fc_client_region_t *region) FC_NOTNULL(1);
 
 #ifdef __cplusplus
 }

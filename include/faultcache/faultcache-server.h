@@ -79,13 +79,15 @@ typedef struct fc_server fc_server_t;
  * argument on every call.
  * `target_size == 0` means "unbounded" (no size limit yet).
  * Any other value is rejected for now, until the LRU cache is implemented.
+ * `factory` must be non-nullptr -- passing nullptr is caller misuse and
+ * aborts the process.
  * Returns nullptr on failure (errno is set).
  * The caller retains ownership of the factory pointer and must not free it
  * until after fc_server_destroy() returns.
  */
 fc_server_t *fc_server_create(fc_region_factory_fn_t factory,
                               void *factory_user_data,
-                              size_t target_size);
+                              size_t target_size) FC_NOTNULL(1);
 
 /*
  * Services resolve/attach requests and page faults on `conn_fd`, an
@@ -97,6 +99,8 @@ fc_server_t *fc_server_create(fc_region_factory_fn_t factory,
  * Returns once `conn_fd` reaches EOF (the client disconnected) or
  * fc_server_stop() is called from another thread. Returns 0 on either of
  * those, -1 on a fatal error (errno is set).
+ * `server` must be non-nullptr -- passing nullptr is caller misuse and
+ * aborts the process.
  *
  * There is no accept()/listen() handling in faultcache itself: a server
  * wanting to handle several concurrent clients should accept() its own
@@ -105,10 +109,12 @@ fc_server_t *fc_server_create(fc_region_factory_fn_t factory,
  * the same fc_server_t are safe (needed for descriptor-based sharing
  * across connections) and share the same regions/factory.
  */
-int fc_server_run(fc_server_t *server, int conn_fd);
+int fc_server_run(fc_server_t *server, int conn_fd) FC_NOTNULL(1);
 
-/* Asks a concurrently-running fc_server_run() to return. */
-void fc_server_stop(fc_server_t *server);
+/* Asks a concurrently-running fc_server_run() to return.
+ * `server` must be non-nullptr -- passing nullptr is caller misuse and
+ * aborts the process. */
+void fc_server_stop(fc_server_t *server) FC_NOTNULL(1);
 
 /* Tears down the server and every region it was servicing, calling each
  * region's destroy_user_data (if any -- see fc_region_factory_fn_t).

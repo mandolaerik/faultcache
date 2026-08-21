@@ -406,6 +406,8 @@ void fc_pool_destroy(fc_pool_t *pool) {
     free(pool);
 }
 
+FC_DIAG_PUSH
+FC_DIAG_IGNORE_NONNULL_COMPARE
 fc_region_t *fc_region_create(fc_pool_t *pool, uint32_t nchunks,
                                const size_t *chunk_sizes,
                                fc_fill_chunk_fn_t fill_chunk, const void *user_data) {
@@ -458,13 +460,19 @@ fc_region_t *fc_region_create(fc_pool_t *pool, uint32_t nchunks,
     pthread_mutex_unlock(&pool->lock);
     return r;
 }
+FC_DIAG_POP
 
+FC_DIAG_PUSH
+FC_DIAG_IGNORE_NONNULL_COMPARE
 const void *fc_region_base(const fc_region_t *region) {
     if (!region)
         fc_misuse("fc_region_base: nullptr region");
     return region->base;
 }
+FC_DIAG_POP
 
+FC_DIAG_PUSH
+FC_DIAG_IGNORE_NONNULL_COMPARE
 void fc_region_destroy(fc_region_t *region) {
     if (!region)
         fc_misuse("fc_region_destroy: nullptr region");
@@ -476,7 +484,10 @@ void fc_region_destroy(fc_region_t *region) {
 
     region_free(region);
 }
+FC_DIAG_POP
 
+FC_DIAG_PUSH
+FC_DIAG_IGNORE_NONNULL_COMPARE
 size_t fc_region_size(const fc_region_t *region) {
     if (!region)
         fc_misuse("fc_region_size: nullptr region");
@@ -484,6 +495,7 @@ size_t fc_region_size(const fc_region_t *region) {
      * published to a caller, and never changes again -- no lock needed. */
     return region->total_size;
 }
+FC_DIAG_POP
 
 void fc_region_debug_stats(const fc_region_t *region,
                            struct fc_region_debug_stats *out) {

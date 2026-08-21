@@ -5,6 +5,7 @@
 
 #define _GNU_SOURCE
 #include "faultcache/faultcache-server.h"
+#include "faultcache-internal.h"
 #include "faultcache-wire.h"
 
 #include <errno.h>
@@ -456,10 +457,14 @@ static int handle_attach(struct fc_server *server, int ep, int conn_fd) {
 /* TODO(coverage): server.c isn't a current testing focus, so this is a
  * broad exclusion rather than a precisely-justified one per branch.
  * GCOVR_EXCL_START */
+FC_DIAG_PUSH
+FC_DIAG_IGNORE_NONNULL_COMPARE
 fc_server_t *fc_server_create(fc_region_factory_fn_t factory,
                               void *factory_user_data,
                               size_t target_size) {
-    if (!factory || target_size != 0) {
+    if (!factory)
+        fc_misuse("fc_server_create: nullptr factory");
+    if (target_size != 0) {
         errno = EINVAL;
         return nullptr;
     }
@@ -477,12 +482,18 @@ fc_server_t *fc_server_create(fc_region_factory_fn_t factory,
     }
     return s;
 }
+FC_DIAG_POP
 /* GCOVR_EXCL_STOP */
 
 /* TODO(coverage): server.c isn't a current testing focus, so this is a
  * broad exclusion rather than a precisely-justified one per branch.
  * GCOVR_EXCL_START */
+FC_DIAG_PUSH
+FC_DIAG_IGNORE_NONNULL_COMPARE
 int fc_server_run(fc_server_t *server, int conn_fd) {
+    if (!server)
+        fc_misuse("fc_server_run: nullptr server");
+
     int ep = epoll_create1(EPOLL_CLOEXEC);
     if (ep < 0)
         return -1;
@@ -574,16 +585,23 @@ int fc_server_run(fc_server_t *server, int conn_fd) {
     close(ep);
     return ret;
 }
+FC_DIAG_POP
 /* GCOVR_EXCL_STOP */
 
 /* TODO(coverage): server.c isn't a current testing focus, so this is a
  * broad exclusion rather than a precisely-justified one per branch.
  * GCOVR_EXCL_START */
+FC_DIAG_PUSH
+FC_DIAG_IGNORE_NONNULL_COMPARE
 void fc_server_stop(fc_server_t *server) {
+    if (!server)
+        fc_misuse("fc_server_stop: nullptr server");
+
     uint64_t one = 1;
     ssize_t unused = write(server->stop_fd, &one, sizeof(one));
     (void)unused;
 }
+FC_DIAG_POP
 /* GCOVR_EXCL_STOP */
 
 /* TODO(coverage): server.c isn't a current testing focus, so this is a

@@ -52,14 +52,45 @@ static void noop_fill_chunk(uint32_t chunk, void *start, size_t size,
     (void)user_data;
 }
 
+static fc_region_t *call_region_create_nulls(void) {
+    fc_region_t *(*f)(fc_pool_t *, uint32_t, const size_t *,
+                       fc_fill_chunk_fn_t, const void *) =
+        (fc_region_t *(*)(fc_pool_t *, uint32_t, const size_t *,
+                           fc_fill_chunk_fn_t, const void *))fc_region_create;
+    return f(nullptr, 0, nullptr, nullptr, nullptr);
+}
+
+static const void *call_region_base_null(void) {
+    const void *(*f)(const fc_region_t *) =
+        (const void *(*)(const fc_region_t *))fc_region_base;
+    return f(nullptr);
+}
+
+static void call_region_destroy_null(void) {
+    void (*f)(fc_region_t *) = (void (*)(fc_region_t *))fc_region_destroy;
+    f(nullptr);
+}
+
+static size_t call_region_size_null(void) {
+    size_t (*f)(const fc_region_t *) =
+        (size_t (*)(const fc_region_t *))fc_region_size;
+    return f(nullptr);
+}
+
+static void call_client_region_destroy_null(void) {
+    void (*f)(fc_client_region_t *) =
+        (void (*)(fc_client_region_t *))fc_client_region_destroy;
+    f(nullptr);
+}
+
 static void test_hooked_misuse_cases(void) {
-    EXPECT_MISUSE(fc_region_create(nullptr, 0, nullptr, nullptr, nullptr),
+    EXPECT_MISUSE(call_region_create_nulls(),
                   "fc_region_create");
-    EXPECT_MISUSE(fc_region_base(nullptr), "fc_region_base");
-    EXPECT_MISUSE(fc_region_destroy(nullptr), "fc_region_destroy");
-    EXPECT_MISUSE(fc_region_size(nullptr), "fc_region_size");
+    EXPECT_MISUSE(call_region_base_null(), "fc_region_base");
+    EXPECT_MISUSE(call_region_destroy_null(), "fc_region_destroy");
+    EXPECT_MISUSE(call_region_size_null(), "fc_region_size");
     EXPECT_MISUSE(fc_region_debug_stats(nullptr, nullptr), "fc_region_debug_stats");
-    EXPECT_MISUSE(fc_client_region_destroy(nullptr), "fc_client_region_destroy");
+    EXPECT_MISUSE(call_client_region_destroy_null(), "fc_client_region_destroy");
 }
 
 /* No hook installed here -- confirms the real default behavior (print +
@@ -68,7 +99,7 @@ static void test_default_abort_still_works(void) {
     pid_t pid = fork();
     CHECK(pid >= 0);
     if (pid == 0) {
-        fc_region_destroy(nullptr);
+        call_region_destroy_null();
         _exit(0); /* unreachable if fc_misuse() really abort()s */
     }
     int status;

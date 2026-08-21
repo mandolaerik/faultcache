@@ -308,19 +308,17 @@ static int send_attach(int server_fd, int uffd, const void *base,
     return 0;
 }
 
+FC_DIAG_PUSH
+FC_DIAG_IGNORE_NONNULL_COMPARE
 fc_client_region_t *fc_client_region_create(fc_client_pool_t *pool,
                                              int server_fd,
                                              size_t descriptor_size,
                                              const void *descriptor,
                                              char **out_error) {
-    if (!pool || (!descriptor && descriptor_size > 0)) {
-        /* GCOVR_EXCL_START: TODO(coverage): documented EINVAL contract for
-         * bad arguments -- no test calls this with a null pool or
-         * descriptor. */
-        errno = EINVAL;
-        return nullptr;
-        /* GCOVR_EXCL_STOP */
-    }
+    if (!pool)
+        fc_misuse("fc_client_region_create: nullptr pool");
+    if (!descriptor && descriptor_size > 0)
+        fc_misuse("fc_client_region_create: descriptor_size > 0 but descriptor is nullptr");
 
     uint32_t nchunks = 0;
     size_t *chunk_sizes = resolve_descriptor(server_fd, descriptor_size,
@@ -415,18 +413,32 @@ fail_uffd: {
 }
     /* GCOVR_EXCL_STOP */
 }
+FC_DIAG_POP
 
+FC_DIAG_PUSH
+FC_DIAG_IGNORE_NONNULL_COMPARE
 void fc_client_region_destroy(fc_client_region_t *region) {
     if (!region)
         fc_misuse("fc_client_region_destroy: nullptr region");
     pool_remove(region);
     region_teardown(region);
 }
+FC_DIAG_POP
 
+FC_DIAG_PUSH
+FC_DIAG_IGNORE_NONNULL_COMPARE
 const void *fc_client_region_base(const fc_client_region_t *region) {
-    return region ? region->base : nullptr;
+    if (!region)
+        fc_misuse("fc_client_region_base: nullptr region");
+    return region->base;
 }
+FC_DIAG_POP
 
+FC_DIAG_PUSH
+FC_DIAG_IGNORE_NONNULL_COMPARE
 size_t fc_client_region_size(const fc_client_region_t *region) {
-    return region ? region->total_size : 0;
+    if (!region)
+        fc_misuse("fc_client_region_size: nullptr region");
+    return region->total_size;
 }
+FC_DIAG_POP

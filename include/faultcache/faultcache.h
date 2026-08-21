@@ -34,6 +34,12 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#if defined(__GNUC__) || defined(__clang__)
+#define FC_NOTNULL(...) __attribute__((nonnull(__VA_ARGS__)))
+#else
+#define FC_NOTNULL(...)
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -189,7 +195,7 @@ fc_region_t *fc_region_create(fc_pool_t *pool,
                                uint32_t nchunks,
                                const size_t *chunk_sizes,
                                fc_fill_chunk_fn_t fill_chunk,
-                               const void *user_data);
+                               const void *user_data) FC_NOTNULL(1, 3, 4);
 
 /*
  * Release a mapping previously returned by fc_region_create(). `region`
@@ -200,19 +206,19 @@ fc_region_t *fc_region_create(fc_pool_t *pool,
  * already-destroyed handle) is a caller bug, not a recoverable error,
  * and aborts the process.
  */
-void fc_region_destroy(fc_region_t *region);
+void fc_region_destroy(fc_region_t *region) FC_NOTNULL(1);
 
 /* Total size in bytes of a mapping previously returned by
  * fc_region_create(). `region` must be a valid, live handle (see
  * fc_region_destroy()). */
-size_t fc_region_size(const fc_region_t *region);
+size_t fc_region_size(const fc_region_t *region) FC_NOTNULL(1);
 
 /* The region's mapped base address (of total size fc_region_size()
  * bytes) -- may be dereferenced/read directly; writes fault fatally.
  * Valid for as long as `region` itself is (i.e. until
  * fc_region_destroy()). `region` must be a valid, live handle. Never
  * fails. */
-const void *fc_region_base(const fc_region_t *region);
+const void *fc_region_base(const fc_region_t *region) FC_NOTNULL(1);
 
 #ifdef __cplusplus
 }
