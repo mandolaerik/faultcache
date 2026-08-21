@@ -359,7 +359,12 @@ void fc_rearm_handler(void) {
     install_handler();
 }
 
-fc_pool_t *fc_pool_create(void) {
+fc_pool_t *fc_pool_create(size_t target_size) {
+    if (target_size != 0) {
+        errno = EINVAL;
+        return nullptr;
+    }
+
     struct fc_pool *pool = malloc(sizeof(*pool));
     if (!pool)                 /* GCOVR_EXCL_LINE: OOM, needs fault injection */
         return nullptr;           /* GCOVR_EXCL_LINE */

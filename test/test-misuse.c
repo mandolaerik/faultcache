@@ -122,7 +122,7 @@ static void prior_segv_handler(int sig, siginfo_t *info, void *ucontext) {
 }
 
 static void test_segv_passthrough(void) {
-    fc_pool_t *pool = fc_pool_create();
+    fc_pool_t *pool = fc_pool_create(0);
     CHECK(pool != nullptr);
     size_t sizes[] = {64};
     fc_region_t *region = fc_region_create(pool, 1, sizes, noop_fill_chunk, nullptr);
@@ -176,7 +176,7 @@ static void test_segv_chains_to_prior_siginfo_handler(void) {
         CHECK(sigaction(SIGSEGV, &sa, nullptr) == 0);
 
         fc_init(); /* first ever in this child: captures the handler above */
-        fc_pool_t *pool = fc_pool_create();
+        fc_pool_t *pool = fc_pool_create(0);
         CHECK(pool != nullptr);
 
         size_t sizes[] = {64};
@@ -229,7 +229,7 @@ static void test_segv_chains_to_prior_plain_handler(void) {
         CHECK(signal(SIGSEGV, plain_segv_handler) != SIG_ERR);
 
         fc_init(); /* first ever in this child: captures the handler above */
-        fc_pool_t *pool = fc_pool_create();
+        fc_pool_t *pool = fc_pool_create(0);
         CHECK(pool != nullptr);
 
         volatile int *bad = nullptr;
@@ -282,7 +282,7 @@ static void test_chaining_keeps_us_installed(void) {
         CHECK(sigaction(SIGSEGV, &sa, nullptr) == 0);
 
         fc_init(); /* first ever in this child: captures the handler above */
-        fc_pool_t *pool = fc_pool_create();
+        fc_pool_t *pool = fc_pool_create(0);
         CHECK(pool != nullptr);
         size_t sizes[] = {64};
         fc_region_t *region = fc_region_create(pool, 1, sizes, fill_chunk_ff,
@@ -322,7 +322,7 @@ static void test_rearm_takes_the_top_back(void) {
 
         fc_rearm_handler();
 
-        fc_pool_t *pool = fc_pool_create();
+        fc_pool_t *pool = fc_pool_create(0);
         CHECK(pool != nullptr);
         size_t sizes[] = {64};
         fc_region_t *region = fc_region_create(pool, 1, sizes, fill_chunk_ff,
@@ -413,8 +413,8 @@ static void fill_chunk_touches_other_region(uint32_t chunk, void *start,
 }
 
 static void test_nested_fault_across_regions_is_fatal(void) {
-    fc_pool_t *outer_pool = fc_pool_create();
-    fc_pool_t *inner_pool = fc_pool_create();
+    fc_pool_t *outer_pool = fc_pool_create(0);
+    fc_pool_t *inner_pool = fc_pool_create(0);
     CHECK(outer_pool != nullptr && inner_pool != nullptr);
 
     size_t inner_size[] = {64};
@@ -446,7 +446,7 @@ static void test_nested_fault_across_regions_is_fatal(void) {
 }
 
 static void test_invalid_chunk_sizes(void) {
-    fc_pool_t *pool = fc_pool_create();
+    fc_pool_t *pool = fc_pool_create(0);
     CHECK(pool != nullptr);
 
     size_t has_zero[] = {10, 0, 10};
@@ -465,8 +465,8 @@ static void test_invalid_chunk_sizes(void) {
 /* fc_pool_destroy() on a pool that isn't the head of the process-wide
  * pool list needs to walk past at least one other live pool first. */
 static void test_pool_destroy_not_head(void) {
-    fc_pool_t *p1 = fc_pool_create();
-    fc_pool_t *p2 = fc_pool_create();
+    fc_pool_t *p1 = fc_pool_create(0);
+    fc_pool_t *p2 = fc_pool_create(0);
     CHECK(p1 != nullptr && p2 != nullptr);
 
     fc_pool_destroy(p1); /* p2 is head; walks past it to find p1 */
@@ -482,7 +482,7 @@ static void test_client_pool_destroy_null(void) {
  * must reject it (EMSGSIZE) before touching server_fd or dereferencing
  * descriptor at all, so this needs neither a real server nor a valid fd. */
 static void test_client_region_create_oversized_descriptor(void) {
-    fc_client_pool_t *pool = fc_client_pool_create();
+    fc_client_pool_t *pool = fc_client_pool_create(0);
     CHECK(pool != nullptr);
 
     char dummy = 0;
@@ -501,7 +501,7 @@ static void test_region_create_without_init(void) {
     pid_t pid = fork();
     CHECK(pid >= 0);
     if (pid == 0) {
-        fc_pool_t *pool = fc_pool_create();
+        fc_pool_t *pool = fc_pool_create(0);
         CHECK(pool != nullptr);
         size_t sizes[] = {64};
         fc_region_create(pool, 1, sizes, noop_fill_chunk, nullptr);

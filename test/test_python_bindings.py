@@ -11,12 +11,20 @@ import faultcache
 PAGE = 4096
 
 
-def test_pool_maxsize_not_implemented():
+def test_pool_maxsize_default_is_unbounded():
+    with faultcache.Pool() as pool:
+        assert not pool.closed
+
+    try:
+        faultcache.Pool(maxsize=0)
+    except Exception as exc:  # pragma: no cover - sanity check for the API stub
+        raise AssertionError(f"Pool(maxsize=0) should be valid, got {exc!r}")
+
     try:
         faultcache.Pool(maxsize=64 * 1024 * 1024)
     except NotImplementedError:
         return
-    raise AssertionError("Pool(maxsize=...) should not be implemented yet")
+    raise AssertionError("Pool(maxsize>0) should be rejected until LRU is implemented")
 
 
 def test_basic_region():
@@ -416,7 +424,7 @@ def test_fill_buffer_is_invalidated_after_fill_returns():
 
 def main():
     tests = [
-        test_pool_maxsize_not_implemented,
+        test_pool_maxsize_default_is_unbounded,
         test_basic_region,
         test_debug_stats,
         test_boundary_sharing_group,

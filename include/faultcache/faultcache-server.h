@@ -76,12 +76,16 @@ typedef struct fc_server fc_server_t;
 
 /*
  * `factory_user_data` is passed through unchanged as the factory's final
- * argument on every call. Returns nullptr on failure (errno is set).
+ * argument on every call.
+ * `target_size == 0` means "unbounded" (no size limit yet).
+ * Any other value is rejected for now, until the LRU cache is implemented.
+ * Returns nullptr on failure (errno is set).
  * The caller retains ownership of the factory pointer and must not free it
  * until after fc_server_destroy() returns.
  */
 fc_server_t *fc_server_create(fc_region_factory_fn_t factory,
-                              void *factory_user_data);
+                              void *factory_user_data,
+                              size_t target_size);
 
 /*
  * Services resolve/attach requests and page faults on `conn_fd`, an

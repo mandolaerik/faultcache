@@ -91,29 +91,29 @@ void fc_init(void);
  * Call it where you control the threads, as with init: it rewrites the target
  * that faulting threads read.
  *
- * You need this function when two things coincide: something else arms
- * SIGSEGV without passing on the faults it did not cause, and it does so after
+ * You need this function when two things coincide: something else arms SIGSEGV
+ * without passing on the faults it did not cause, and it does so after
  * fc_init() has run. Neither half hurts alone -- a handler that chains properly
  * still delivers our faults to us, and one armed before fc_init() ends up below
  * us anyway -- but together they strand our regions under a handler that will
  * not hand them back. Assume the first half unless you know otherwise; chaining
  * is the rarer discipline.
  *
- * The second half is the one you can rarely arrange away: something arms
- * lazily rather than in its init (Python's faulthandler, a crash reporter on
- * first use), an init has to run after yours for unrelated reasons, or a plugin
- * is `dlopen()`ed later. Concretely: if your code calls faulthandler.enable(),
+ * The second half is the one you can rarely arrange away: something arms lazily
+ * rather than in its init (Python's faulthandler, a crash reporter on first
+ * use), an init has to run after yours for unrelated reasons, or a plugin is
+ * `dlopen()`ed later. Concretely: if your code calls `faulthandler.enable()`,
  * or installs a handler of its own, call this right afterwards.
  *
  * The convention in the general case is that whoever brings the conflict into
  * the process repairs it. It is only visible where both sides are in the same
  * dependency set, and either side can arrive transitively: a library depending
- * on faultcache and on something that arms SIGSEGV calls this itself, rather
- * than documenting two transitive dependencies for its users; where one library
- * brings each side, only the application above them sees both, so it calls
- * this. The corollary is not to re-arm speculatively -- if you cannot name the
- * handler you are displacing, the conflict is not yours, and whoever owns it is
- * calling this too.
+ * on faultcache and on something that arms SIGSEGV calls this function itself,
+ * rather than documenting two transitive dependencies for its users; where one
+ * library brings each side, only the application above them sees both, so it
+ * calls this. The corollary is not to re-arm speculatively -- if you cannot
+ * name the handler you are displacing, the conflict is not yours, and whoever
+ * owns it is calling this too.
  *
  * Displacing a handler that had saved ours leaves the two pointing at each
  * other. faultcache detects that a fault has come back around to it and ends
@@ -131,8 +131,13 @@ void fc_rearm_handler(void);
  */
 typedef struct fc_pool fc_pool_t;
 
-/* Returns nullptr on failure (errno is set). */
-fc_pool_t *fc_pool_create(void);
+/*
+ * Creates a pool with a target cache size in bytes.
+ * `target_size == 0` means "unbounded" (no size limit yet).
+ * Any other value is rejected for now, until the LRU cache is implemented.
+ * Returns nullptr on failure (errno is set).
+ */
+fc_pool_t *fc_pool_create(size_t target_size);
 
 /* Destroys the pool, tearing down any regions still alive within it. */
 void fc_pool_destroy(fc_pool_t *pool);

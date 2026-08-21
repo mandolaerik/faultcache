@@ -80,7 +80,7 @@ _lib.fc_rearm_handler.restype = None
 # make the handler topology depend on which thread got there first.
 _lib.fc_init()
 
-_lib.fc_pool_create.argtypes = []
+_lib.fc_pool_create.argtypes = [ctypes.c_size_t]
 _lib.fc_pool_create.restype = ctypes.c_void_p
 
 _lib.fc_pool_destroy.argtypes = [ctypes.c_void_p]
@@ -347,17 +347,18 @@ class Region:
 class Pool:
     """Tracks the lifetime of Regions carved out of it.
 
-    `maxsize` will eventually bound total resident chunk memory with LRU
-    eviction across regions; not implemented yet.
+    `maxsize` is the target size in bytes. `0` means unbounded for now; any
+    non-zero value is rejected until the LRU cache is implemented.
     """
 
-    def __init__(self, maxsize: Optional[int] = None):
+    def __init__(self, maxsize: int = 0):
         self._handle: Optional[int] = None
-        if maxsize is not None:
+        if maxsize != 0:
             raise NotImplementedError(
-                "bounded pools (LRU chunk eviction) are not implemented yet"
+                "bounded pools (LRU chunk eviction) are not implemented yet; "
+                "target_size must be 0"
             )
-        handle = _lib.fc_pool_create()
+        handle = _lib.fc_pool_create(maxsize)
         if not handle:
             errno = ctypes.get_errno()
             raise OSError(errno, os.strerror(errno))

@@ -105,7 +105,12 @@ static void pool_impl_teardown(struct fc_pool_impl *impl) {
     pthread_mutex_destroy(&impl->lock);
 }
 
-fc_client_pool_t *fc_client_pool_create(void) {
+fc_client_pool_t *fc_client_pool_create(size_t target_size) {
+    if (target_size != 0) {
+        errno = EINVAL;
+        return nullptr;
+    }
+
     struct fc_client_pool *pool = malloc(sizeof(*pool));
     FC_ASSERT(pool != nullptr);
     pool_impl_init(&pool->impl);

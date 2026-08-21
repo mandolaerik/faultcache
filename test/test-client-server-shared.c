@@ -70,7 +70,7 @@ static void *server_thread_main(void *arg) {
 }
 
 static void run_server(int conn_fd_a, int conn_fd_b) {
-    fc_server_t *server = fc_server_create(factory, nullptr);
+    fc_server_t *server = fc_server_create(factory, nullptr, 0);
     CHECK(server != nullptr);
 
     struct server_thread_arg arg_a = {server, conn_fd_a};
@@ -107,7 +107,7 @@ int main(void) {
     close(svB[1]);
     close(counter_pipe[1]);
 
-    fc_client_pool_t *pool = fc_client_pool_create();
+    fc_client_pool_t *pool = fc_client_pool_create(0);
     CHECK(pool != nullptr);
 
     uint8_t descriptor = 0x42; /* same descriptor on both connections */

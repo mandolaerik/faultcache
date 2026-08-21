@@ -60,9 +60,14 @@ extern "C" {
  */
 typedef struct fc_client_pool fc_client_pool_t;
 
-/* Currently aborts the process on allocation failure (rather than returning
- * nullptr) */
-fc_client_pool_t *fc_client_pool_create(void);
+/*
+ * Creates a client pool with a target cache size in bytes.
+ * `target_size == 0` means "unbounded" (no size limit yet).
+ * Any other value is rejected for now, until the LRU cache is implemented.
+ * Currently aborts the process on allocation failure (rather than returning
+ * nullptr).
+ */
+fc_client_pool_t *fc_client_pool_create(size_t target_size);
 
 /* Destroys the pool, tearing down any regions still alive within it. */
 void fc_client_pool_destroy(fc_client_pool_t *pool);

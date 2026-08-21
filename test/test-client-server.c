@@ -52,7 +52,7 @@ static char *factory(size_t descriptor_size, const void *descriptor,
 }
 
 static void run_server(int conn_fd) {
-    fc_server_t *server = fc_server_create(factory, nullptr);
+    fc_server_t *server = fc_server_create(factory, nullptr, 0);
     CHECK(server != nullptr);
     /* Returns once the client disconnects (see fc_server_run() docs). */
     CHECK(fc_server_run(server, conn_fd) == 0);
@@ -74,7 +74,7 @@ int main(void) {
     }
     close(sv[1]);
 
-    fc_client_pool_t *pool = fc_client_pool_create();
+    fc_client_pool_t *pool = fc_client_pool_create(0);
     CHECK(pool != nullptr);
 
     uint8_t descriptor = 0xAB;

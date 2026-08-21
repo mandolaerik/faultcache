@@ -82,14 +82,14 @@ int main(void) {
     int sv[2];
     CHECK(socketpair(AF_UNIX, SOCK_SEQPACKET, 0, sv) == 0);
 
-    fc_server_t *server = fc_server_create(factory, nullptr);
+    fc_server_t *server = fc_server_create(factory, nullptr, 0);
     CHECK(server != nullptr);
 
     struct server_thread_arg arg = {server, sv[1]};
     pthread_t server_thread;
     CHECK(pthread_create(&server_thread, nullptr, server_thread_main, &arg) == 0);
 
-    fc_client_pool_t *pool = fc_client_pool_create();
+    fc_client_pool_t *pool = fc_client_pool_create(0);
     CHECK(pool != nullptr);
 
     uint8_t descriptor = 0x7C;

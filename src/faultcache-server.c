@@ -457,8 +457,9 @@ static int handle_attach(struct fc_server *server, int ep, int conn_fd) {
  * broad exclusion rather than a precisely-justified one per branch.
  * GCOVR_EXCL_START */
 fc_server_t *fc_server_create(fc_region_factory_fn_t factory,
-                               void *factory_user_data) {
-    if (!factory) {
+                              void *factory_user_data,
+                              size_t target_size) {
+    if (!factory || target_size != 0) {
         errno = EINVAL;
         return nullptr;
     }

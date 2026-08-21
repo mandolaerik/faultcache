@@ -38,7 +38,7 @@ int main(void) {
     fc_init();
     CHECK(sysconf(_SC_PAGESIZE) == 4096);
 
-    fc_pool_t *pool = fc_pool_create();
+    fc_pool_t *pool = fc_pool_create(0);
     CHECK(pool != nullptr);
 
     size_t offsets[NCHUNKS];

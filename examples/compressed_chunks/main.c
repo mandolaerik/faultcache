@@ -114,7 +114,7 @@ int main(int argc, char **argv) {
     if (fixture_load(argv[1], &fx) != 0)
         return 1;
 
-    fc_pool_t *pool = fc_pool_create();
+    fc_pool_t *pool = fc_pool_create(0);
     if (!pool) {
         perror("fc_pool_create");
         return 1;
