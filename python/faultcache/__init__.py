@@ -18,8 +18,16 @@ its docstring for important lifetime/safety caveats.
 fill_chunk runs inside a SIGSEGV handler and is subject to real
 restrictions - see Region's docstring before writing one.
 
-Env var FAULTCACHE_LIBRARY overrides the shared library path/name used to
-locate libfaultcache (useful to point at a build directory before install).
+Importing this module arms that handler, so there is nothing to set up.
+The one thing to remember: if something arms SIGSEGV *after* the import --
+`faulthandler.enable()` being the common case -- it takes the signal away
+from us, and a lazy read that we could have resolved dies as a fatal
+"Segmentation fault" instead. The `rearm_handler` function can be used to
+put us back on top right afterwards.
+
+The environment variable `FAULTCACHE_LIBRARY` overrides the shared library used
+to locate libfaultcache. This is useful to point at a build directory before
+install.
 """
 import ctypes
 import ctypes.util
@@ -27,7 +35,7 @@ import os
 import weakref
 from typing import Callable, NamedTuple, Optional, Sequence, Union
 
-__all__ = ["Pool", "Region", "DebugStats"]
+__all__ = ["Pool", "Region", "DebugStats", "rearm_handler"]
 
 
 class DebugStats(NamedTuple):
@@ -59,6 +67,18 @@ except ImportError as exc:
     raise ImportError(
         "faultcache requires its compiled callback shim (_faultcache)"
     ) from exc
+
+_lib.fc_init.argtypes = []
+_lib.fc_init.restype = None
+
+_lib.fc_rearm_handler.argtypes = []
+_lib.fc_rearm_handler.restype = None
+
+# Import time is this binding's library init: the earliest point we control,
+# and the one the application orders by placing its imports. Deferring to
+# the first Pool would put the install after arbitrary application code and
+# make the handler topology depend on which thread got there first.
+_lib.fc_init()
 
 _lib.fc_pool_create.argtypes = []
 _lib.fc_pool_create.restype = ctypes.c_void_p
@@ -107,6 +127,40 @@ def _read(addr: int, length: int) -> bytes:
     buf = ctypes.create_string_buffer(length)
     _libc.memcpy(buf, addr, length)
     return buf.raw
+
+
+def rearm_handler() -> None:
+    """Put `faultcache`'s SIGSEGV handler back on top of the chain. In particular, this is needed after `faulthandler.enable()` is called, which arms its own handler and takes the signal away from us.
+
+    Re-installs the handler of `faultcache` over whatever holds SIGSEGV now and
+    makes that the new chain target, so faults outside live unresolved regions
+    are passed on to it. Displacing `faultcache`'s own handler leaves the chain
+    target alone, so repeated calls can't route us through ourselves. Call it
+    from a thread you control, with no faults in flight.
+
+    You need it when two things coincide: something else arms SIGSEGV
+    without passing on the faults it did not cause, and it does so after
+    faultcache was imported. Neither half hurts alone - a handler that
+    chains properly still delivers our faults to us, and one armed before
+    the import ends up below us anyway - but together they strand our
+    regions under a handler that will not hand them back. Assume the first
+    half unless you know otherwise; chaining is the rarer discipline.
+    faulthandler is the case to watch: enable() is normally called from
+    application code, long after any import, and a resolvable lazy read
+    underneath it dies as a fatal "Segmentation fault" traceback.
+
+    The convention in the general case is that whoever brings the conflict
+    into the process repairs it. It is only visible where both sides are
+    in the same dependency set, and either side can arrive transitively: a
+    library depending on faultcache and on something that arms SIGSEGV
+    calls this itself, rather than documenting two transitive dependencies
+    for its users; where one library brings each side, only the
+    application above them sees both, so it calls this. The corollary is
+    not to rearm speculatively - if you cannot name the handler you are
+    displacing, the conflict is not yours, and whoever owns it is calling
+    this too.
+    """
+    _lib.fc_rearm_handler()
 
 
 FillChunkFn = Callable[[int, memoryview], None]

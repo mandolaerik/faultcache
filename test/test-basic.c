@@ -20,6 +20,7 @@ static void fill_chunk(uint32_t chunk, void *start, size_t size,
 }
 
 int main(void) {
+    fc_init();
     fc_pool_t *pool = fc_pool_create();
     CHECK(pool != nullptr);
 

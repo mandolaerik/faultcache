@@ -19,6 +19,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/mman.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -89,7 +90,37 @@ static void test_segv_passthrough(void) {
 }
 static void test_segv_chains_to_prior_siginfo_handler(void) {
 }
+static void test_segv_chains_to_prior_plain_handler(void) {
+}
+static void test_chaining_keeps_us_installed(void) {
+}
+static void test_rearm_takes_the_top_back(void) {
+}
+static void test_rearm_chain_cycle_still_crashes(void) {
+}
 #else
+static void fill_chunk_ff(uint32_t chunk, void *start, size_t size,
+                           const void *user_data) {
+    (void)chunk;
+    (void)user_data;
+    memset(start, 0xff, size);
+}
+
+static int g_prior_handler_pipe_wr;
+
+static void prior_segv_handler(int sig, siginfo_t *info, void *ucontext) {
+    (void)sig;
+    (void)info;
+    (void)ucontext;
+    char c = 'x';
+    ssize_t ignored = write(g_prior_handler_pipe_wr, &c, 1);
+    (void)ignored;
+    /* Restore default disposition and return: the kernel retries the
+     * faulting instruction, raising SIGSEGV for real against SIG_DFL --
+     * proves this is a genuine chain, not a swallow. */
+    signal(SIGSEGV, SIG_DFL);
+}
+
 static void test_segv_passthrough(void) {
     fc_pool_t *pool = fc_pool_create();
     CHECK(pool != nullptr);
@@ -114,26 +145,13 @@ static void test_segv_passthrough(void) {
     fc_pool_destroy(pool);
 }
 
-static int g_prior_handler_pipe_wr;
-
-static void prior_segv_handler(int sig, siginfo_t *info, void *ucontext) {
-    (void)sig;
-    (void)info;
-    (void)ucontext;
-    char c = 'x';
-    ssize_t ignored = write(g_prior_handler_pipe_wr, &c, 1);
-    (void)ignored;
-    /* Restore default disposition and return: the kernel retries the
-     * faulting instruction, raising SIGSEGV for real against SIG_DFL --
-     * proves this is a genuine chain, not a swallow. */
-    signal(SIGSEGV, SIG_DFL);
-}
-
 /* If a SA_SIGINFO SIGSEGV handler was already installed before
- * faultcache's own (e.g. another library's crash handler), a genuine
- * fault outside any region must chain to *that* handler, not just fall
+ * faultcache's own (e.g. another library's crash handler), that is the
+ * supported arrangement: lazy resolution keeps working, and a genuine
+ * fault outside any region chains to *that* handler rather than falling
  * through to the default disposition -- see the SA_SIGINFO branch in
- * segv_handler()'s "not one of ours" tail.
+ * segv_handler()'s "not one of ours" tail. The child reports 'r' once a
+ * lazy read resolved, then 'x' from the prior handler.
  *
  * Must run before any other test's first fc_pool_create() call:
  * faultcache installs its own handler exactly once per process (via
@@ -157,8 +175,18 @@ static void test_segv_chains_to_prior_siginfo_handler(void) {
         sigemptyset(&sa.sa_mask);
         CHECK(sigaction(SIGSEGV, &sa, nullptr) == 0);
 
-        fc_pool_t *pool = fc_pool_create(); /* first ever: captures ours */
+        fc_init(); /* first ever in this child: captures the handler above */
+        fc_pool_t *pool = fc_pool_create();
         CHECK(pool != nullptr);
+
+        size_t sizes[] = {64};
+        fc_region_t *region = fc_region_create(pool, 1, sizes, fill_chunk_ff,
+                                               nullptr);
+        CHECK(region != nullptr);
+        const volatile unsigned char *p = fc_region_base(region);
+        CHECK(p[0] == 0xff); /* lazy resolution works on top of the other */
+        char c = 'r';
+        CHECK(write(pipefd[1], &c, 1) == 1);
 
         volatile int *bad = nullptr;
         *bad = 1; /* genuine fault, well outside any region */
@@ -166,14 +194,199 @@ static void test_segv_chains_to_prior_siginfo_handler(void) {
     }
     close(pipefd[1]);
 
-    char c = 0;
-    CHECK(read(pipefd[0], &c, 1) == 1); /* prior handler really ran */
+    char got[2] = {0};
+    CHECK(read(pipefd[0], &got[0], 1) == 1);
+    CHECK(read(pipefd[0], &got[1], 1) == 1);
     close(pipefd[0]);
+    CHECK(got[0] == 'r' && got[1] == 'x');
 
     int status;
     CHECK(waitpid(pid, &status, 0) == pid);
     CHECK(WIFSIGNALED(status));
     CHECK(WTERMSIG(status) == SIGSEGV);
+}
+
+/* Same chain, but a plain signal()-installed handler (no SA_SIGINFO), so
+ * it must be called through sa_handler rather than sa_sigaction. */
+static void plain_segv_handler(int sig) {
+    (void)sig;
+    char c = 'p';
+    ssize_t ignored = write(g_prior_handler_pipe_wr, &c, 1);
+    (void)ignored;
+    signal(SIGSEGV, SIG_DFL);
+}
+
+static void test_segv_chains_to_prior_plain_handler(void) {
+    int pipefd[2];
+    CHECK(pipe(pipefd) == 0);
+
+    pid_t pid = fork();
+    CHECK(pid >= 0);
+    if (pid == 0) {
+        close(pipefd[0]);
+        g_prior_handler_pipe_wr = pipefd[1];
+
+        CHECK(signal(SIGSEGV, plain_segv_handler) != SIG_ERR);
+
+        fc_init(); /* first ever in this child: captures the handler above */
+        fc_pool_t *pool = fc_pool_create();
+        CHECK(pool != nullptr);
+
+        volatile int *bad = nullptr;
+        *bad = 1;
+        _exit(1); /* unreachable */
+    }
+    close(pipefd[1]);
+
+    char c = 0;
+    CHECK(read(pipefd[0], &c, 1) == 1);
+    close(pipefd[0]);
+    CHECK(c == 'p');
+
+    int status;
+    CHECK(waitpid(pid, &status, 0) == pid);
+    CHECK(WIFSIGNALED(status));
+    CHECK(WTERMSIG(status) == SIGSEGV);
+}
+
+static void *g_foreign_page;
+
+/* Stands in for another library that maps memory lazily too: it resolves
+ * faults on its own page and *returns*, so execution resumes. */
+static void resolving_segv_handler(int sig, siginfo_t *info, void *ucontext) {
+    (void)sig;
+    (void)ucontext;
+    if (info->si_addr >= g_foreign_page
+        && (char *)info->si_addr < (char *)g_foreign_page + 4096)
+        mprotect(g_foreign_page, 4096, PROT_READ | PROT_WRITE);
+}
+
+/* Chaining must not cost us our own installation. Two libraries that both
+ * resolve faults lazily have to coexist in either install order, so
+ * handing a fault down the chain is a call, not a handover: the other
+ * handler resolves, returns, the instruction retries -- and our regions
+ * must still work afterwards. Reading the region last is the whole point;
+ * it fails if segv_handler() restored g_old_action before chaining. */
+static void test_chaining_keeps_us_installed(void) {
+    pid_t pid = fork();
+    CHECK(pid >= 0);
+    if (pid == 0) {
+        g_foreign_page = mmap(nullptr, 4096, PROT_NONE,
+                              MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        CHECK(g_foreign_page != MAP_FAILED);
+
+        struct sigaction sa = {0};
+        sa.sa_sigaction = resolving_segv_handler;
+        sa.sa_flags = SA_SIGINFO;
+        sigemptyset(&sa.sa_mask);
+        CHECK(sigaction(SIGSEGV, &sa, nullptr) == 0);
+
+        fc_init(); /* first ever in this child: captures the handler above */
+        fc_pool_t *pool = fc_pool_create();
+        CHECK(pool != nullptr);
+        size_t sizes[] = {64};
+        fc_region_t *region = fc_region_create(pool, 1, sizes, fill_chunk_ff,
+                                               nullptr);
+        CHECK(region != nullptr);
+
+        volatile unsigned char *foreign = g_foreign_page;
+        foreign[0] = 0x42; /* their fault: through us, down the chain */
+
+        const volatile unsigned char *p = fc_region_base(region);
+        CHECK(p[0] == 0xff); /* ours still resolves */
+        _exit(0);
+    }
+    int status;
+    CHECK(waitpid(pid, &status, 0) == pid);
+    CHECK(WIFEXITED(status));
+    CHECK(WEXITSTATUS(status) == 0);
+}
+/* The lever for a handler that arms too late for init order to help.
+ * Faultcache goes in first here, is then displaced, and fc_rearm_handler()
+ * has to win the signal back: the lazy read at the end only resolves if it
+ * did. */
+static void test_rearm_takes_the_top_back(void) {
+    pid_t pid = fork();
+    CHECK(pid >= 0);
+    if (pid == 0) {
+        fc_init();
+
+        g_foreign_page = mmap(nullptr, 4096, PROT_NONE,
+                              MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        CHECK(g_foreign_page != MAP_FAILED);
+        struct sigaction sa = {0};
+        sa.sa_sigaction = resolving_segv_handler;
+        sa.sa_flags = SA_SIGINFO;
+        sigemptyset(&sa.sa_mask);
+        CHECK(sigaction(SIGSEGV, &sa, nullptr) == 0); /* displaces us */
+
+        fc_rearm_handler();
+
+        fc_pool_t *pool = fc_pool_create();
+        CHECK(pool != nullptr);
+        size_t sizes[] = {64};
+        fc_region_t *region = fc_region_create(pool, 1, sizes, fill_chunk_ff,
+                                               nullptr);
+        CHECK(region != nullptr);
+
+        const volatile unsigned char *p = fc_region_base(region);
+        CHECK(p[0] == 0xff);
+
+        volatile unsigned char *foreign = g_foreign_page;
+        foreign[0] = 0x42; /* and we still chain down to them */
+        _exit(0);
+    }
+    int status;
+    CHECK(waitpid(pid, &status, 0) == pid);
+    CHECK(WIFEXITED(status));
+    CHECK(WEXITSTATUS(status) == 0);
+}
+
+static struct sigaction g_cycle_prev;
+static unsigned *g_cycle_count; /* shared, so it survives the child's death */
+
+/* A well-behaved library: saves what it displaced and chains back to it.
+ * Paired with a re-arm on top, that makes the two point at each other. */
+static void cycling_segv_handler(int sig, siginfo_t *info, void *ucontext) {
+    (*g_cycle_count)++;
+    if (g_cycle_prev.sa_flags & SA_SIGINFO)
+        g_cycle_prev.sa_sigaction(sig, info, ucontext);
+}
+
+/* The process dies either way -- unguarded, the bouncing exhausts the
+ * stack, which is itself a SIGSEGV -- so the exit status proves nothing.
+ * The recursion depth is the observable that separates them: bounded by
+ * the guard, thousands of frames deep without it. */
+static void test_rearm_chain_cycle_still_crashes(void) {
+    g_cycle_count = mmap(nullptr, sizeof(*g_cycle_count),
+                         PROT_READ | PROT_WRITE,
+                         MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+    CHECK(g_cycle_count != MAP_FAILED);
+    *g_cycle_count = 0;
+
+    pid_t pid = fork();
+    CHECK(pid >= 0);
+    if (pid == 0) {
+        fc_init();
+
+        struct sigaction sa = {0};
+        sa.sa_sigaction = cycling_segv_handler;
+        sa.sa_flags = SA_SIGINFO | SA_NODEFER;
+        sigemptyset(&sa.sa_mask);
+        CHECK(sigaction(SIGSEGV, &sa, &g_cycle_prev) == 0); /* saves us */
+
+        fc_rearm_handler(); /* now we save them: a cycle */
+
+        volatile int *bad = nullptr;
+        *bad = 1;
+        _exit(1); /* unreachable */
+    }
+    int status;
+    CHECK(waitpid(pid, &status, 0) == pid);
+    CHECK(WIFSIGNALED(status));
+    CHECK(WTERMSIG(status) == SIGSEGV);
+    CHECK(*g_cycle_count == 1);
+    munmap(g_cycle_count, sizeof(*g_cycle_count));
 }
 #endif
 
@@ -282,12 +495,37 @@ static void test_client_region_create_oversized_descriptor(void) {
     fc_client_pool_destroy(pool);
 }
 
+/* The guard against forgetting fc_init(). Forked, and before the parent
+ * arms, since the flag it checks is process-wide and one-way. */
+static void test_region_create_without_init(void) {
+    pid_t pid = fork();
+    CHECK(pid >= 0);
+    if (pid == 0) {
+        fc_pool_t *pool = fc_pool_create();
+        CHECK(pool != nullptr);
+        size_t sizes[] = {64};
+        fc_region_create(pool, 1, sizes, noop_fill_chunk, nullptr);
+        _exit(1); /* unreachable if fc_misuse() really abort()s */
+    }
+    int status;
+    CHECK(waitpid(pid, &status, 0) == pid);
+    CHECK(WIFSIGNALED(status));
+    CHECK(WTERMSIG(status) == SIGABRT);
+}
+
 int main(void) {
-    /* Must run first: captures our handler as faultcache's "prior
-     * disposition" via install_handler()'s one-time pthread_once, before
-     * any other test's fc_pool_create() call does so with the default
-     * disposition instead. */
+    /* Must run first: each forks and calls fc_init() in the child, so
+     * install_handler()'s one-time pthread_once captures the handler that
+     * child installed above. Arming in the parent first would consume the
+     * once with the default disposition instead. */
     test_segv_chains_to_prior_siginfo_handler();
+    test_segv_chains_to_prior_plain_handler();
+    test_chaining_keeps_us_installed();
+    test_rearm_takes_the_top_back();
+    test_rearm_chain_cycle_still_crashes();
+    test_region_create_without_init();
+
+    fc_init();
     test_hooked_misuse_cases();
     test_invalid_chunk_sizes();
     test_pool_destroy_not_head();

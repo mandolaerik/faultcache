@@ -106,6 +106,11 @@ static struct fc_pool *g_pools = nullptr;
 
 static pthread_once_t g_handler_once = PTHREAD_ONCE_INIT;
 static struct sigaction g_old_action;
+/* Read without the once-guard, so it must be set inside install_handler(),
+ * which pthread_once() publishes to other threads for us. */
+static bool g_handler_installed = false;
+/* True while this thread is passing a fault down g_old_action. */
+static __thread bool g_chaining = false;
 
 /*
  * True for the duration of resolve_fault_locked() on this thread (set
@@ -283,21 +288,41 @@ static void segv_handler(int sig, siginfo_t *info, void *ucontext) {
     pthread_mutex_unlock(&g_pools_lock);
     errno = saved_errno;
 
-    /* Not one of ours -- a genuine fault. Restore whatever disposition
-     * was in effect before we installed ours (rather than silently
-     * swallowing real crashes) and chain to it. Flush coverage last,
-     * after the chain attempt: from here the process either dies
-     * inside the old handler, or returns and the kernel retries the
-     * faulting instruction against the now-restored disposition -- either
-     * way, no application code runs again, so this is the last chance to
-     * flush counters for the lines below (a dump placed before them
-     * would miss their counters, since gcov only credits a line once
-     * its block is actually entered). */
-    sigaction(sig, &g_old_action, nullptr);
-    if ((g_old_action.sa_flags & SA_SIGINFO) && g_old_action.sa_sigaction)
-        g_old_action.sa_sigaction(sig, info, ucontext);
-    /* else: default/ignore disposition is now restored; returning lets
-     * the faulting instruction retry, which raises against it for real. */
+    /* Not one of ours -- chain to whatever was installed before us, but
+     * do NOT uninstall ourselves to do it. That handler may resolve its
+     * own fault and return (another lazy-mapping library, a JIT, a GC
+     * write barrier), in which case the retried instruction succeeds and
+     * execution continues -- and it has to continue with our regions
+     * still working. Restoring is only right for a default/ignore
+     * disposition, where there is nothing to call and returning is
+     * precisely what lets the kernel act on it.
+     *
+     * Flush coverage last, after the chain attempt: from here the process
+     * either dies inside the old handler, or returns and the kernel
+     * retries the faulting instruction -- either way this is the last
+     * chance to flush counters for the lines below (a dump placed before
+     * them would miss their counters, since gcov only credits a line once
+     * its block is actually entered).
+     *
+     * g_chaining breaks a cycle: after fc_rearm_handler(), a library that
+     * had saved us and chains back can route the same fault into us a
+     * second time, and following g_old_action again would bounce it
+     * between the two until the stack ran out. Reaching here twice for one
+     * fault means the chain loops, so end it at the default disposition
+     * instead -- a crash, which is what an unhandled fault should be. */
+    if (g_chaining) {
+        signal(sig, SIG_DFL);
+    } else {
+        g_chaining = true;
+        if (g_old_action.sa_flags & SA_SIGINFO)
+            g_old_action.sa_sigaction(sig, info, ucontext);
+        else if (g_old_action.sa_handler != SIG_DFL
+                 && g_old_action.sa_handler != SIG_IGN)
+            g_old_action.sa_handler(sig);
+        else
+            sigaction(sig, &g_old_action, nullptr);
+        g_chaining = false;
+    }
     fc_flush_coverage_before_death();
 }
 
@@ -314,12 +339,27 @@ static void install_handler(void) {
      * fc_misuse() diagnostic instead. */
     sa.sa_flags = SA_SIGINFO | SA_NODEFER;
     sigemptyset(&sa.sa_mask);
-    sigaction(SIGSEGV, &sa, &g_old_action);
+    struct sigaction prev;
+    sigaction(SIGSEGV, &sa, &prev);
+    /* On a re-arm we may already be the installed handler; keeping our
+     * own action as the chain target would make the tail call itself. */
+    if (!((prev.sa_flags & SA_SIGINFO) && prev.sa_sigaction == segv_handler))
+        g_old_action = prev;
+    g_handler_installed = true;
+}
+
+/* See fc_init()'s comment in faultcache.h for why the install point is an
+ * explicit call rather than a lazy one at first use. */
+void fc_init(void) {
+    pthread_once(&g_handler_once, install_handler);
+}
+
+void fc_rearm_handler(void) {
+    fc_init();
+    install_handler();
 }
 
 fc_pool_t *fc_pool_create(void) {
-    pthread_once(&g_handler_once, install_handler);
-
     struct fc_pool *pool = malloc(sizeof(*pool));
     if (!pool)                 /* GCOVR_EXCL_LINE: OOM, needs fault injection */
         return nullptr;           /* GCOVR_EXCL_LINE */
@@ -366,6 +406,9 @@ fc_region_t *fc_region_create(fc_pool_t *pool, uint32_t nchunks,
                                fc_fill_chunk_fn_t fill_chunk, const void *user_data) {
     if (!pool || nchunks == 0 || !chunk_sizes || !fill_chunk)
         fc_misuse("fc_region_create: invalid arguments");
+    if (!g_handler_installed)
+        fc_misuse("fc_region_create: fc_init() has not been called -- call it "
+                  "from your library's init, before any region exists");
 
     size_t total_size = 0;
     for (uint32_t i = 0; i < nchunks; i++) {

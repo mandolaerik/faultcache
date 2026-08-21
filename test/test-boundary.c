@@ -35,6 +35,7 @@ static void fill_chunk(uint32_t chunk, void *start, size_t size,
 }
 
 int main(void) {
+    fc_init();
     CHECK(sysconf(_SC_PAGESIZE) == 4096);
 
     fc_pool_t *pool = fc_pool_create();

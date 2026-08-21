@@ -108,6 +108,8 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    fc_init();
+
     struct fixture fx = {0};
     if (fixture_load(argv[1], &fx) != 0)
         return 1;

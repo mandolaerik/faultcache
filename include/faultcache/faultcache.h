@@ -25,6 +25,8 @@
  * Implemented on Linux via mmap(PROT_NONE) + a process-wide SIGSEGV
  * handler: touching an unresolved chunk faults synchronously on the
  * accessing thread, which resolves it inline before retrying the access.
+ * fc_init() installs that handler; see its comment for how to coexist
+ * with other SIGSEGV users.
  */
 #ifndef FAULTCACHE_H
 #define FAULTCACHE_H
@@ -35,6 +37,90 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/*
+ * fc_init() must be called before any region exists, to arm a SIGSEGV handler.
+ * The function is idempotent, so calling it transitively from multiple
+ * libraries is safe. If additional SIGSEGV handlers are armed by other parties
+ * -- a crash reporter, Python's `faulthandler.enable` -- then you may need to
+ * call `fc_rearm_handler()` right after that to ensure the two handlers are
+ * chained.
+ *
+ * Arming is thread-safe: the first call to fc_init installs, every later one is
+ * a no-op. The requirement is enforced rather than papered over --
+ * fc_region_create() aborts with a diagnostic if it was forgotten, instead of
+ * quietly arming on your behalf.
+ *
+ * Call it from your own library's init, not lazily at first use. Signal
+ * dispositions form a single chain built by install order: the handler
+ * installed last is the one the kernel calls, and the ones below it are reached
+ * only if those above pass faults down. faultcache does pass them down, and
+ * stays installed while doing so, so it composes in either direction. Not every
+ * library does -- a crash reporter that dumps and exits, or Python's
+ * faulthandler, ends the chain where it stands. So faultcache wants to sit
+ * *above* those, and where it sits is decided by when this is called.
+ *
+ * Calling it from init is what leaves that arrangeable from the outside. Given
+ * libraries A and B that both use faultcache and a library C that installs a
+ * handler of its own, an application that can modify none of the three still
+ * controls the outcome with the ordering it already has:
+ *
+ *     c_init();     // C takes SIGSEGV first
+ *     a_init();     // A's fc_init() puts faultcache on top of it
+ *     b_init();     // B's fc_init() is a no-op
+ *
+ * Nothing there mentions faultcache, which is the point -- A's and B's users
+ * should not have to know about a transitive dependency. Had the handler gone
+ * in lazily at first use instead, that ordering would have no effect at all,
+ * since the install would happen somewhere inside A's later operation rather
+ * than at a_init().
+ *
+ * The faultcache handler is never uninstalled, not even when the last pool is
+ * destroyed: another thread can be inside the handler at that moment with no
+ * way to find out, so restoring the old disposition could drop a fault in
+ * flight. With no live regions it costs nothing anyway -- every fault just
+ * falls through to the same chain it would have hit otherwise.
+ */
+void fc_init(void);
+
+/*
+ * Re-installs faultcache's handler on top of whatever holds SIGSEGV now and
+ * makes that the new chain target, so faults outside live unresolved regions
+ * are passed on to it. Displacing our own handler leaves the chain target
+ * alone, so repeated calls can't route us through ourselves. Implies fc_init().
+ * Call it where you control the threads, as with init: it rewrites the target
+ * that faulting threads read.
+ *
+ * You need this function when two things coincide: something else arms
+ * SIGSEGV without passing on the faults it did not cause, and it does so after
+ * fc_init() has run. Neither half hurts alone -- a handler that chains properly
+ * still delivers our faults to us, and one armed before fc_init() ends up below
+ * us anyway -- but together they strand our regions under a handler that will
+ * not hand them back. Assume the first half unless you know otherwise; chaining
+ * is the rarer discipline.
+ *
+ * The second half is the one you can rarely arrange away: something arms
+ * lazily rather than in its init (Python's faulthandler, a crash reporter on
+ * first use), an init has to run after yours for unrelated reasons, or a plugin
+ * is `dlopen()`ed later. Concretely: if your code calls faulthandler.enable(),
+ * or installs a handler of its own, call this right afterwards.
+ *
+ * The convention in the general case is that whoever brings the conflict into
+ * the process repairs it. It is only visible where both sides are in the same
+ * dependency set, and either side can arrive transitively: a library depending
+ * on faultcache and on something that arms SIGSEGV calls this itself, rather
+ * than documenting two transitive dependencies for its users; where one library
+ * brings each side, only the application above them sees both, so it calls
+ * this. The corollary is not to re-arm speculatively -- if you cannot name the
+ * handler you are displacing, the conflict is not yours, and whoever owns it is
+ * calling this too.
+ *
+ * Displacing a handler that had saved ours leaves the two pointing at each
+ * other. faultcache detects that a fault has come back around to it and ends
+ * the chain at the default disposition, so the result is an ordinary crash
+ * rather than a bounce until the stack runs out.
+ */
+void fc_rearm_handler(void);
 
 /*
  * Tracks the regions carved out of it (see fc_client_pool_t in
