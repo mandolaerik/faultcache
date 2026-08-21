@@ -70,8 +70,7 @@ struct fc_region {
 struct fc_pool {
     /* Guards both `regions` and fault resolution for every region in
      * this pool -- coarse (one pool-wide critical section per fault
-     * rather than per-region/per-chunk), accepted for this first pass;
-     * see TODO.md. */
+     * rather than per-region/per-chunk), accepted for this first pass. */
     pthread_mutex_t lock;
     /* Sentinel node of the intrusive circular doubly-linked region
      * list: only .next/.prev are ever used on this node itself (all
@@ -219,7 +218,7 @@ static void resolve_fault_locked(struct fc_region *r, size_t fault_off) {
  * not a region handle, so there's no way to avoid searching every
  * region of every pool here regardless of the list's O(1)-removal
  * shape (an interval tree would help if this ever shows up as hot;
- * not needed yet -- see TODO.md).
+ * not needed yet.
  */
 static struct fc_region *find_region_locked(struct fc_pool *pool,
                                              uintptr_t addr) {

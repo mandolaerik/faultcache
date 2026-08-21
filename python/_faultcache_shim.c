@@ -13,7 +13,7 @@
  *
  * Deliberately limited to the callback: everything the shim needs is in the
  * stable ABI at 3.10, so it ships as a single abi3 binary, whereas a full C
- * Region with the buffer protocol would not be (see TODO.md).
+ * Region with the buffer protocol would not be.
  */
 
 /* Py_LIMITED_API is set by the build (meson's limited_api: kwarg). */

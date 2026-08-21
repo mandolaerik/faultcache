@@ -63,7 +63,7 @@ try:
 except ImportError as exc:
     # No pure-ctypes fallback on purpose: a ctypes callback cannot suppress
     # the cyclic collector around fill_chunk, and fill_chunk runs inside a
-    # SIGSEGV handler where a GC pass can be fatal (see TODO.md section 1).
+    # SIGSEGV handler where a GC pass can be fatal.
     raise ImportError(
         "faultcache requires its compiled callback shim (_faultcache)"
     ) from exc
