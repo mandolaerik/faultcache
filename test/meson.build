@@ -4,7 +4,8 @@
 test_names = ['test-basic', 'test-multi-chunk', 'test-boundary',
               'test-readonly', 'test-unmap', 'test-client-server',
               'test-client-server-shared', 'test-client-server-destroy',
-              'test-client-server-reject', 'test-misuse']
+              'test-client-server-reject', 'test-client-server-boundary',
+              'test-client-server-shared-boundary', 'test-misuse']
 
 foreach t : test_names
   exe = executable(t, t + '.c',
