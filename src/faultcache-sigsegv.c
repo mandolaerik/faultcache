@@ -68,9 +68,9 @@ struct fc_region {
     size_t *chunk_start; /* prefix sums, nchunks+1 entries */
     bool *initialized;   /* nchunks entries, guarded by the owning pool's lock */
 
-    /* Phase-1 LRU metadata: resident chunks are held in a doubly-linked
-     * queue ordered by recency, with a per-chunk persistent fault counter.
-     * Shared pages are intentionally left for later. */
+    /* LRU metadata: resident chunks are held in a doubly-linked queue
+     * ordered by recency, with a per-chunk persistent fault counter.
+     * Chunks that share a page are evicted as one page group. */
     struct fc_chunk_lru *chunk_lru; /* nchunks entries */
     uint64_t *chunk_faults_total;  /* nchunks entries, survives eviction */
     size_t resident_bytes;
@@ -91,6 +91,8 @@ struct fc_pool {
      * this pool -- coarse (one pool-wide critical section per fault
      * rather than per-region/per-chunk), accepted for this first pass. */
     pthread_mutex_t lock;
+    size_t target_size;
+    size_t resident_bytes;
     /* Pool-global MRU/LRU queue. Nodes are region-owned chunks and may
      * freely interleave chunks from different regions. */
     struct fc_chunk_lru lru_head; /* sentinel; next=MRU, prev=LRU */
@@ -167,6 +169,28 @@ static uint32_t find_chunk(const struct fc_region *r, size_t off) {
     return lo;
 }
 
+static void chunk_group_bounds(const struct fc_region *r, uint32_t c0,
+                               uint32_t *out_lo, uint32_t *out_hi,
+                               size_t *out_page_lo, size_t *out_page_hi) {
+    uint32_t lo = c0, hi = c0;
+    size_t page_lo = page_floor(r->chunk_start[lo], r->page_size);
+    size_t page_hi = page_ceil(r->chunk_start[hi + 1], r->page_size);
+
+    while (lo > 0 && r->chunk_start[lo] > page_lo) {
+        lo--;
+        page_lo = page_floor(r->chunk_start[lo], r->page_size);
+    }
+    while (hi + 1 < r->nchunks && r->chunk_start[hi + 1] < page_hi) {
+        hi++;
+        page_hi = page_ceil(r->chunk_start[hi + 1], r->page_size);
+    }
+
+    *out_lo = lo;
+    *out_hi = hi;
+    *out_page_lo = page_lo;
+    *out_page_hi = page_hi;
+}
+
 static void lru_init(struct fc_region *r) {
     r->chunk_lru = calloc(r->nchunks, sizeof(*r->chunk_lru));
     r->chunk_faults_total = calloc(r->nchunks, sizeof(*r->chunk_faults_total));
@@ -201,9 +225,60 @@ static void lru_insert_mru(struct fc_pool *pool, struct fc_chunk_lru *node) {
     node->resident = true;
 }
 
-static void lru_unlink_region_chunks(struct fc_region *r) {
-    for (uint32_t i = 0; i < r->nchunks; i++)
-        lru_unlink(&r->chunk_lru[i]);
+static void lru_forget_chunk(struct fc_pool *pool, struct fc_region *r,
+                             uint32_t chunk) {
+    struct fc_chunk_lru *node = &r->chunk_lru[chunk];
+    if (!node->resident)
+        return;
+
+    size_t chunk_size = r->chunk_start[chunk + 1] - r->chunk_start[chunk];
+    lru_unlink(node);
+    r->initialized[chunk] = false;
+    r->resident_bytes -= chunk_size;
+    r->resident_chunks--;
+    pool->resident_bytes -= chunk_size;
+}
+
+static void lru_evict_chunk_group(struct fc_pool *pool, struct fc_region *r,
+                                  uint32_t c0) {
+    uint32_t lo, hi;
+    size_t page_lo, page_hi;
+    chunk_group_bounds(r, c0, &lo, &hi, &page_lo, &page_hi);
+
+    for (uint32_t i = lo; i <= hi; i++)
+        lru_forget_chunk(pool, r, i);
+
+    /* mprotect(PROT_NONE) would hide the pages but leave them charged to
+     * RSS; remapping fresh anonymous PROT_NONE pages over the range also
+     * frees them, which is the whole point of evicting. */
+    FC_ASSERT(mmap((char *)r->base + page_lo, page_hi - page_lo, PROT_NONE,
+                   MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0)
+              != MAP_FAILED);
+}
+
+static bool lru_chunk_in_group(const struct fc_region *r, uint32_t chunk,
+                               uint32_t lo, uint32_t hi) {
+    (void)r;
+    return chunk >= lo && chunk <= hi;
+}
+
+static void evict_until_within_budget(struct fc_pool *pool,
+                                      struct fc_region *protected_region,
+                                      uint32_t protected_lo,
+                                      uint32_t protected_hi) {
+    if (pool->target_size == 0)
+        return;
+
+    while (pool->resident_bytes > pool->target_size) {
+        struct fc_chunk_lru *victim = pool->lru_head.prev;
+        if (victim == &pool->lru_head)
+            break;
+        if (victim->region == protected_region
+            && lru_chunk_in_group(victim->region, victim->chunk,
+                                  protected_lo, protected_hi))
+            break;
+        lru_evict_chunk_group(pool, victim->region, victim->chunk);
+    }
 }
 
 /*
@@ -225,18 +300,9 @@ static void resolve_fault_locked(struct fc_region *r, size_t fault_off) {
      * thread to intervene in between. */
     FC_ASSERT(!r->initialized[c0]);
 
-    uint32_t lo = c0, hi = c0;
-    size_t page_lo = page_floor(r->chunk_start[lo], r->page_size);
-    size_t page_hi = page_ceil(r->chunk_start[hi + 1], r->page_size);
-
-    while (lo > 0 && r->chunk_start[lo] > page_lo) {
-        lo--;
-        page_lo = page_floor(r->chunk_start[lo], r->page_size);
-    }
-    while (hi + 1 < r->nchunks && r->chunk_start[hi + 1] < page_hi) {
-        hi++;
-        page_hi = page_ceil(r->chunk_start[hi + 1], r->page_size);
-    }
+    uint32_t lo, hi;
+    size_t page_lo, page_hi;
+    chunk_group_bounds(r, c0, &lo, &hi, &page_lo, &page_hi);
 
     size_t buf_len = page_hi - page_lo;
     /* Fresh anonymous pages are already zero-filled by the kernel, so
@@ -267,8 +333,11 @@ static void resolve_fault_locked(struct fc_region *r, size_t fault_off) {
             lru_insert_mru(pool, &r->chunk_lru[i]);
             r->resident_bytes += chunk_size;
             r->resident_chunks++;
+            pool->resident_bytes += chunk_size;
         }
     }
+
+    evict_until_within_budget(pool, r, lo, hi);
 
     /* Drop to read-only BEFORE installing at the target address (see
      * the file-level comment) -- the region's public contract is that
@@ -429,15 +498,12 @@ void fc_rearm_handler(void) {
 }
 
 fc_pool_t *fc_pool_create(size_t target_size) {
-    if (target_size != 0) {
-        errno = EINVAL;
-        return nullptr;
-    }
-
     struct fc_pool *pool = malloc(sizeof(*pool));
     if (!pool)                 /* GCOVR_EXCL_LINE: OOM, needs fault injection */
         return nullptr;           /* GCOVR_EXCL_LINE */
     pthread_mutex_init(&pool->lock, nullptr);
+    pool->target_size = target_size;
+    pool->resident_bytes = 0;
     pool->lru_head.next = pool->lru_head.prev = &pool->lru_head;
     pool->regions.next = pool->regions.prev = &pool->regions;
 
@@ -472,7 +538,6 @@ void fc_pool_destroy(fc_pool_t *pool) {
     while (pool->regions.next != &pool->regions) {
         struct fc_region *r = pool->regions.next;
         region_list_remove(r);
-        lru_unlink_region_chunks(r);
         region_free(r);
     }
     pthread_mutex_destroy(&pool->lock);
@@ -554,7 +619,8 @@ void fc_region_destroy(fc_region_t *region) {
 
     struct fc_pool *pool = region->pool;
     pthread_mutex_lock(&pool->lock);
-    lru_unlink_region_chunks(region);
+    for (uint32_t i = 0; i < region->nchunks; i++)
+        lru_forget_chunk(pool, region, i);
     region_list_remove(region);
     pthread_mutex_unlock(&pool->lock);
 

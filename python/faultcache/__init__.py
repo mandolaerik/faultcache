@@ -444,17 +444,12 @@ class Region:
 class Pool:
     """Tracks the lifetime of Regions carved out of it.
 
-    `maxsize` is the target size in bytes. `0` means unbounded for now; any
-    non-zero value is rejected until the LRU cache is implemented.
+    `maxsize` is the target size in bytes. `0` means unbounded; positive
+    values enable bounded LRU eviction.
     """
 
     def __init__(self, maxsize: int = 0):
         self._handle: Optional[int] = None
-        if maxsize != 0:
-            raise NotImplementedError(
-                "bounded pools (LRU chunk eviction) are not implemented yet; "
-                "target_size must be 0"
-            )
         handle = _lib.fc_pool_create(maxsize)
         if not handle:
             errno = ctypes.get_errno()

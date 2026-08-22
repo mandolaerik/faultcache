@@ -20,11 +20,116 @@ def test_pool_maxsize_default_is_unbounded():
     except Exception as exc:  # pragma: no cover - sanity check for the API stub
         raise AssertionError(f"Pool(maxsize=0) should be valid, got {exc!r}")
 
-    try:
-        faultcache.Pool(maxsize=64 * 1024 * 1024)
-    except NotImplementedError:
-        return
-    raise AssertionError("Pool(maxsize>0) should be rejected until LRU is implemented")
+
+# Layout where both straddling chunks own exclusive pages on either side of a
+# page they share, so neither can ever be resolved or evicted on its own:
+#   chunk0: [0, PAGE + 100)      page 0 exclusive, plus the head of page 1
+#   chunk1: [PAGE + 100, 3*PAGE) tail of page 1, plus pages 2 exclusive
+#   chunk2: page 3, chunk3: page 4 (page-aligned, each its own group)
+STRADDLE_SIZES = [PAGE + 100, 2 * PAGE - 100, PAGE, PAGE]
+STRADDLE_B_EXCLUSIVE = 2 * PAGE
+STRADDLE_C = 3 * PAGE
+STRADDLE_D = 4 * PAGE
+
+
+def test_shared_page_merges_straddling_chunks_into_one_group():
+    counts = [0, 0, 0, 0]
+
+    def fill_chunk(chunk, buf):
+        counts[chunk] += 1
+        buf[:] = bytes([ord('a') + chunk]) * len(buf)
+
+    with faultcache.Pool() as pool:
+        region = pool.create_region(STRADDLE_SIZES, fill_chunk)
+
+        # Faulting on chunk0's exclusive page still has to fill chunk1 too: the
+        # shared page cannot be published half-populated.
+        assert region[0] == ord('a')
+        assert counts == [1, 1, 0, 0]
+
+        # Both halves of the shared page are valid, without further fills.
+        assert region[PAGE + 99] == ord('a')
+        assert region[PAGE + 100] == ord('b')
+        assert region[STRADDLE_B_EXCLUSIVE] == ord('b')
+        assert counts == [1, 1, 0, 0]
+
+        # The page-aligned neighbour is not dragged into that group.
+        assert region[STRADDLE_C] == ord('c')
+        assert counts == [1, 1, 1, 0]
+
+
+def test_shared_page_group_evicts_and_refills_as_a_unit():
+    counts = [0, 0, 0, 0]
+
+    def fill_chunk(chunk, buf):
+        counts[chunk] += 1
+        buf[:] = bytes([ord('a') + chunk]) * len(buf)
+
+    with faultcache.Pool(maxsize=4 * PAGE) as pool:
+        region = pool.create_region(STRADDLE_SIZES, fill_chunk)
+
+        # Three pages resident as one group, plus one page-aligned chunk: the
+        # budget is exactly met, so nothing is evicted yet.
+        assert region[0] == ord('a')
+        assert region[STRADDLE_C] == ord('c')
+        assert counts == [1, 1, 1, 0]
+
+        # Going over budget evicts the whole three-page straddling group.
+        assert region[STRADDLE_D] == ord('d')
+        assert counts == [1, 1, 1, 1]
+
+        # Refilling via chunk1's exclusive page restores both chunks of the
+        # group, and the shared page is whole again.
+        assert region[STRADDLE_B_EXCLUSIVE] == ord('b')
+        assert counts == [2, 2, 1, 1]
+        assert region[PAGE + 99] == ord('a')
+        assert region[PAGE + 100] == ord('b')
+        assert counts == [2, 2, 1, 1]
+
+
+# Written from a preallocated block so that measuring RSS is not swamped by the
+# temporary that `buf[:] = b'\xab' * len(buf)` would allocate for a big chunk.
+_FILL_BLOCK = b'\xab' * (1 << 16)
+
+
+def _fill_whole_chunk(chunk, buf):
+    off = 0
+    while off < len(buf):
+        end = min(off + len(_FILL_BLOCK), len(buf))
+        buf[off:end] = _FILL_BLOCK[:end - off]
+        off = end
+
+
+def _rss_bytes():
+    with open('/proc/self/statm') as statm:
+        return int(statm.read().split()[1]) * PAGE
+
+
+def test_eviction_releases_resident_memory():
+    chunk = 4 << 20
+    nchunks = 8
+    sizes = [chunk] * nchunks
+
+    with faultcache.Pool() as pool:
+        region = pool.create_region(sizes, _fill_whole_chunk)
+        baseline = _rss_bytes()
+        for i in range(nchunks):
+            assert region[i * chunk] == 0xAB
+        unbounded_growth = _rss_bytes() - baseline
+
+    # Sanity check on the measurement itself: with no budget, everything that
+    # was touched has to stay resident.
+    assert unbounded_growth > (nchunks - 2) * chunk
+
+    with faultcache.Pool(maxsize=chunk) as pool:
+        region = pool.create_region(sizes, _fill_whole_chunk)
+        baseline = _rss_bytes()
+        for i in range(nchunks):
+            assert region[i * chunk] == 0xAB
+        bounded_growth = _rss_bytes() - baseline
+
+    # Evicting must hand the pages back, not just make them inaccessible.
+    assert bounded_growth < 3 * chunk
 
 
 def test_basic_region():
@@ -506,6 +611,9 @@ def test_fill_buffer_is_invalidated_after_fill_returns():
 def main():
     tests = [
         test_pool_maxsize_default_is_unbounded,
+        test_shared_page_merges_straddling_chunks_into_one_group,
+        test_shared_page_group_evicts_and_refills_as_a_unit,
+        test_eviction_releases_resident_memory,
         test_basic_region,
         test_debug_stats,
         test_debug_lru_queue_and_history,

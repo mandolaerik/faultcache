@@ -139,8 +139,8 @@ typedef struct fc_pool fc_pool_t;
 
 /*
  * Creates a pool with a target cache size in bytes.
- * `target_size == 0` means "unbounded" (no size limit yet).
- * Any other value is rejected for now, until the LRU cache is implemented.
+ * `target_size == 0` means "unbounded".
+ * Positive values enable bounded LRU eviction.
  * Returns nullptr on failure (errno is set).
  */
 fc_pool_t *fc_pool_create(size_t target_size);

@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MPL-2.0
 
 test_names = ['test-basic', 'test-multi-chunk', 'test-boundary',
-              'test-readonly', 'test-unmap', 'test-client-server',
+              'test-readonly', 'test-unmap', 'test-lru', 'test-client-server',
               'test-client-server-shared', 'test-client-server-destroy',
               'test-client-server-reject', 'test-client-server-boundary',
               'test-client-server-shared-boundary', 'test-misuse']
