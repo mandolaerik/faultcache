@@ -37,7 +37,7 @@ def test_basic_region():
         buf[:] = bytes([ord('a') + chunk]) * len(buf)
 
     with faultcache.Pool() as pool:
-        region = pool.Region(sizes, fill_chunk)
+        region = pool.create_region(sizes, fill_chunk)
         assert len(region) == sum(sizes)
         assert counts == [0, 0, 0]
 
@@ -64,33 +64,92 @@ def test_debug_stats():
         buf[:] = bytes([ord('a') + chunk]) * len(buf)
 
     with faultcache.Pool() as pool:
-        region = pool.Region([PAGE, PAGE, PAGE], fill_chunk)
-        stats = region.debug_stats()
+        region = pool.create_region([PAGE, PAGE, PAGE], fill_chunk)
+        stats = region._debug_stats()
         assert stats.nchunks == 3
         assert stats.chunks_resolved == 0
         assert stats.faults_handled == 0
 
         region[PAGE]
-        stats = region.debug_stats()
+        stats = region._debug_stats()
         assert stats.chunks_resolved == 1
         assert stats.faults_handled == 1
 
         region[PAGE]  # re-reading must not count as another fault
-        stats = region.debug_stats()
+        stats = region._debug_stats()
         assert stats.chunks_resolved == 1
         assert stats.faults_handled == 1
 
         region[2 * PAGE]
-        stats = region.debug_stats()
+        stats = region._debug_stats()
         assert stats.chunks_resolved == 2
         assert stats.faults_handled == 2
 
         region.close()
         try:
-            region.debug_stats()
+            region._debug_stats()
         except ValueError:
             return
         raise AssertionError("debug_stats() on a closed region should raise")
+
+
+def test_debug_lru_queue_and_history() -> None:
+    # Pool-level queue is global across regions and exposes (Region, chunk).
+    sizes = [PAGE, PAGE]
+
+    def fill_chunk(chunk: int, buf: memoryview) -> None:
+        buf[:] = bytes([ord('a') + chunk]) * len(buf)
+
+    with faultcache.Pool() as pool:
+        region_a = pool.create_region(sizes, fill_chunk)
+        region_b = pool.create_region(sizes, fill_chunk)
+
+        assert region_a[0] == ord('a')
+        assert region_b[0] == ord('a')
+        assert region_a[PAGE] == ord('b')
+
+        stats_a = region_a._debug_lru_stats()
+        stats_b = region_b._debug_lru_stats()
+        assert stats_a.resident_chunks == 2
+        assert stats_b.resident_chunks == 1
+        assert stats_a.fault_events_total == 2
+        assert stats_b.fault_events_total == 1
+
+        queue = pool._debug_lru_queue()
+        assert [(entry.region, entry.chunk) for entry in queue] == [
+            (region_a, 1),
+            (region_b, 0),
+            (region_a, 0),
+        ]
+        assert [entry.faults_total for entry in queue] == [1, 1, 1]
+
+        history = region_a._debug_lru_history()
+        assert len(history) == 2
+        assert [entry.faults_total for entry in history] == [1, 1]
+
+
+def test_region_identity_hash_behavior() -> None:
+    def fill_chunk(chunk: int, buf: memoryview) -> None:
+        buf[:] = b"x" * len(buf)
+
+    with faultcache.Pool() as pool:
+        region = pool.create_region([PAGE], fill_chunk)
+        alias = object.__new__(faultcache.Region)
+        alias._region = None
+        alias._addr = None
+        alias._size = 0
+        alias._view_count = 0
+        alias._pool = pool
+
+        assert alias is not region
+        assert alias != region
+        assert hash(alias) != hash(region)
+
+        d = {region: "ok"}
+        assert d[region] == "ok"
+
+        s = {region, alias}
+        assert len(s) == 2
 
 
 def test_boundary_sharing_group():
@@ -104,7 +163,7 @@ def test_boundary_sharing_group():
         buf[:] = bytes([ord('a') + chunk]) * len(buf)
 
     with faultcache.Pool() as pool:
-        region = pool.Region(sizes, fill_chunk)
+        region = pool.create_region(sizes, fill_chunk)
         assert region[120] == ord('b')  # inside chunk1
         # chunk2 starts within the same page group and gets pulled in too.
         assert counts == [1, 1, 1]
@@ -115,7 +174,7 @@ def test_slice_step():
         buf[:] = bytes(range(len(buf)))
 
     with faultcache.Pool() as pool:
-        region = pool.Region([16], fill_chunk)
+        region = pool.create_region([16], fill_chunk)
         assert region[0:16:2] == bytes(range(0, 16, 2))
 
 
@@ -124,11 +183,32 @@ def test_pool_close_closes_regions():
         buf[:] = b"\0" * len(buf)
 
     pool = faultcache.Pool()
-    region = pool.Region([PAGE], fill_chunk)
+    region = pool.create_region([PAGE], fill_chunk)
     assert not region.closed
     pool.close()
     assert region.closed
     assert pool.closed
+
+
+def test_pool_keeps_region_alive_without_user_reference():
+    import gc
+    import weakref
+
+    def fill_chunk(chunk, buf):
+        buf[:] = b"\0" * len(buf)
+
+    pool = faultcache.Pool()
+    region = pool.create_region([PAGE], fill_chunk)
+    wr = weakref.ref(region)
+
+    del region
+    gc.collect()
+    assert wr() is not None
+    assert len(pool._regions) == 1
+
+    pool.close()
+    gc.collect()
+    assert wr() is None
 
 
 def test_write_is_fatal():
@@ -136,7 +216,7 @@ def test_write_is_fatal():
         buf[:] = b"X" * len(buf)
 
     with faultcache.Pool() as pool:
-        region = pool.Region([PAGE], fill_chunk)
+        region = pool.create_region([PAGE], fill_chunk)
         assert region[0] == ord('X')
 
         pid = os.fork()
@@ -155,7 +235,7 @@ def test_access_after_unmap_is_fatal():
         buf[:] = b"Z" * len(buf)
 
     pool = faultcache.Pool()
-    region = pool.Region([PAGE], fill_chunk)
+    region = pool.create_region([PAGE], fill_chunk)
     assert region[0] == ord('Z')
     addr = region._addr
     region.close()
@@ -176,7 +256,7 @@ def test_view_zero_copy():
         buf[:] = bytes(i % 256 for i in range(len(buf)))
 
     with faultcache.Pool() as pool:
-        region = pool.Region([PAGE, PAGE], fill_chunk)
+        region = pool.create_region([PAGE, PAGE], fill_chunk)
 
         v = region.view(0, 8)
         assert isinstance(v, memoryview)
@@ -186,7 +266,7 @@ def test_view_zero_copy():
         v2 = region.view(PAGE - 8, PAGE + 8, 2)
         assert bytes(v2) == bytes(region[PAGE - 8:PAGE + 8:2])
 
-        stats = region.debug_stats()
+        stats = region._debug_stats()
         assert stats.chunks_resolved == 2  # touched by v2 above
 
         # Drop the outstanding views before the Pool context manager
@@ -202,14 +282,13 @@ def test_view_lifetime_tracking():
         buf[:] = b"\0" * len(buf)
 
     pool = faultcache.Pool()
-    region = pool.Region([PAGE], fill_chunk)
+    region = pool.create_region([PAGE], fill_chunk)
 
     v = region.view(0, 10)
     assert region._view_count == 1
 
-    # A live view() result must keep the owning Region alive even if the
-    # caller drops its own reference (weakref.finalize on the view holds
-    # a strong ref to the Region until the view itself is collected).
+    # Pool keeps explicit ownership of created regions until close().
+    # Dropping the caller reference must therefore not collect Region yet.
     alive = []
     wr = weakref.ref(region, lambda r: alive.append(True))
     del region
@@ -219,9 +298,11 @@ def test_view_lifetime_tracking():
     assert bytes(v[:4]) == b"\0\0\0\0"
     del v
     gc.collect()
-    assert alive, "Region was not collected after its view() result died"
+    assert not alive, "Region was collected before pool.close()"
 
     pool.close()
+    gc.collect()
+    assert alive, "Region was not collected after pool.close()"
 
 
 def test_view_blocks_close():
@@ -229,7 +310,7 @@ def test_view_blocks_close():
         buf[:] = b"\0" * len(buf)
 
     with faultcache.Pool() as pool:
-        region = pool.Region([PAGE], fill_chunk)
+        region = pool.create_region([PAGE], fill_chunk)
         v = region.view(0, 10)
         try:
             region.close()
@@ -277,8 +358,8 @@ def test_gc_is_suppressed_during_fill():
                 junk.clear()
 
             pool = faultcache.Pool()
-            victim = pool.Region([PAGE], victim_fill)
-            trigger = pool.Region([PAGE], trigger_fill)
+            victim = pool.create_region([PAGE], victim_fill)
+            trigger = pool.create_region([PAGE], trigger_fill)
 
             gc.collect()
 
@@ -345,8 +426,8 @@ def test_refcount_finalizer_during_fill_touching_region_is_fatal():
                 holder.clear()  # last reference -> __del__ runs right here
 
             pool = faultcache.Pool()
-            victim = pool.Region([PAGE], victim_fill)
-            trigger = pool.Region([PAGE], trigger_fill)
+            victim = pool.create_region([PAGE], victim_fill)
+            trigger = pool.create_region([PAGE], trigger_fill)
 
             class Toucher:
                 def __del__(self):
@@ -398,7 +479,7 @@ def test_fill_buffer_is_invalidated_after_fill_returns():
 
         try:
             with faultcache.Pool() as pool:
-                region = pool.Region([PAGE], fill_chunk)
+                region = pool.create_region([PAGE], fill_chunk)
                 assert region[0] == ord('S')
                 try:
                     bytes(stash[0][:4])
@@ -427,6 +508,8 @@ def main():
         test_pool_maxsize_default_is_unbounded,
         test_basic_region,
         test_debug_stats,
+        test_debug_lru_queue_and_history,
+        test_region_identity_hash_behavior,
         test_boundary_sharing_group,
         test_slice_step,
         test_view_zero_copy,

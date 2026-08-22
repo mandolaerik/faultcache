@@ -9,7 +9,7 @@ Only the bytes actually sliced are ever faulted in and passed to the
 fill_chunk callback - unaccessed chunks are never touched.
 
     pool = faultcache.Pool()
-    region = pool.Region([100, 200, 4096], fill_chunk)
+    region = pool.create_region([100, 200, 4096], fill_chunk)
     region[50:150]   # only touches chunk 0 and chunk 1
 
 Region.view() returns a zero-copy memoryview instead of a bytes copy - see
@@ -29,16 +29,19 @@ The environment variable `FAULTCACHE_LIBRARY` overrides the shared library used
 to locate libfaultcache. This is useful to point at a build directory before
 install.
 """
+
+from __future__ import annotations
+
 import ctypes
 import ctypes.util
 import os
 import weakref
 from typing import Callable, NamedTuple, Optional, Sequence, Union
 
-__all__ = ["Pool", "Region", "DebugStats", "rearm_handler"]
+__all__ = ["Pool", "Region", "rearm_handler"]
 
 
-class DebugStats(NamedTuple):
+class _DebugStats(NamedTuple):
     """Snapshot of a region's fault-handling activity.
 
     Mirrors struct fc_region_debug_stats from faultcache-debug.h - a
@@ -47,6 +50,26 @@ class DebugStats(NamedTuple):
     nchunks: int
     chunks_resolved: int
     faults_handled: int
+
+
+class _LruStats(NamedTuple):
+    resident_bytes: int
+    resident_chunks: int
+    fault_events_total: int
+
+
+class _LruEntry(NamedTuple):
+    chunk: int
+    size: int
+    faults_total: int
+    resident: bool
+
+
+class _PoolLruEntry(NamedTuple):
+    region: Region
+    chunk: int
+    size: int
+    faults_total: int
 
 
 def _load_library() -> ctypes.CDLL:
@@ -113,10 +136,56 @@ class _CDebugStats(ctypes.Structure):
     ]
 
 
+class _CDebugLruStats(ctypes.Structure):
+    _fields_ = [
+        ("resident_bytes", ctypes.c_uint64),
+        ("resident_chunks", ctypes.c_uint32),
+        ("fault_events_total", ctypes.c_uint64),
+    ]
+
+
+class _CDebugLruEntry(ctypes.Structure):
+    _fields_ = [
+        ("chunk", ctypes.c_uint32),
+        ("size", ctypes.c_uint64),
+        ("faults_total", ctypes.c_uint64),
+        ("resident", ctypes.c_uint8),
+    ]
+
+
+class _CDebugPoolLruEntry(ctypes.Structure):
+    _fields_ = [
+        ("region", ctypes.c_void_p),
+        ("chunk", ctypes.c_uint32),
+        ("size", ctypes.c_uint64),
+        ("faults_total", ctypes.c_uint64),
+    ]
+
+
 _lib.fc_region_debug_stats.argtypes = [
     ctypes.c_void_p, ctypes.POINTER(_CDebugStats)
 ]
 _lib.fc_region_debug_stats.restype = None
+
+_lib.fc_region_debug_lru_stats.argtypes = [
+    ctypes.c_void_p,
+    ctypes.POINTER(_CDebugLruStats),
+]
+_lib.fc_region_debug_lru_stats.restype = None
+
+_lib.fc_pool_debug_lru_queue.argtypes = [
+    ctypes.c_void_p,
+    ctypes.POINTER(_CDebugPoolLruEntry),
+    ctypes.c_uint32,
+    ctypes.POINTER(ctypes.c_uint32),
+]
+_lib.fc_pool_debug_lru_queue.restype = None
+
+_lib.fc_region_debug_lru_history.argtypes = [
+    ctypes.c_void_p,
+    ctypes.POINTER(_CDebugLruEntry),
+]
+_lib.fc_region_debug_lru_history.restype = None
 
 _libc = ctypes.CDLL(None, use_errno=True)
 _libc.memcpy.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_size_t]
@@ -167,7 +236,7 @@ FillChunkFn = Callable[[int, memoryview], None]
 
 
 class Region:
-    """A read-only, lazily-populated byte range. Create via Pool.Region().
+    """A read-only, lazily-populated byte range. Create via Pool.create_region().
 
     The fill_chunk callback
     ~~~~~~~~~~~~~~~~~~~~~~~
@@ -201,7 +270,7 @@ class Region:
     resolved with whatever was written before it raised.
     """
 
-    def __init__(self, pool: "Pool", chunk_sizes: Sequence[int],
+    def __init__(self, pool: Pool, chunk_sizes: Sequence[int],
                  fill_chunk: FillChunkFn):
         if pool._handle is None:
             raise ValueError("pool is closed")
@@ -224,13 +293,12 @@ class Region:
         self._addr: Optional[int] = _lib.fc_region_base(region)
         self._size = _lib.fc_region_size(region)
         self._view_count = 0
-        pool._regions.add(self)
 
     @property
     def closed(self) -> bool:
-        return self._region is None
+        return self._addr is None
 
-    def debug_stats(self) -> DebugStats:
+    def _debug_stats(self) -> _DebugStats:
         """Snapshot of resolved-chunk/fault counters straight from the C
         library, without touching any region memory. Debug/test-only, see
         faultcache-debug.h."""
@@ -238,11 +306,39 @@ class Region:
             raise ValueError("Region is closed")
         stats = _CDebugStats()
         _lib.fc_region_debug_stats(self._region, ctypes.byref(stats))
-        return DebugStats(stats.nchunks, stats.chunks_resolved,
+        return _DebugStats(stats.nchunks, stats.chunks_resolved,
                            stats.faults_handled)
 
+    def _debug_lru_stats(self) -> _LruStats:
+        if self._addr is None:
+            raise ValueError("Region is closed")
+        stats = _CDebugLruStats()
+        _lib.fc_region_debug_lru_stats(self._region, ctypes.byref(stats))
+        return _LruStats(int(stats.resident_bytes), int(stats.resident_chunks),
+                         int(stats.fault_events_total))
+
+    def _debug_lru_history(self) -> list[_LruEntry]:
+        if self._addr is None:
+            raise ValueError("Region is closed")
+
+        stats = self._debug_stats()
+        entries = (_CDebugLruEntry * stats.nchunks)()
+        _lib.fc_region_debug_lru_history(self._region, entries)
+        out: list[_LruEntry] = []
+        for i in range(stats.nchunks):
+            entry = entries[i]
+            out.append(
+                _LruEntry(
+                    chunk=int(entry.chunk),
+                    size=int(entry.size),
+                    faults_total=int(entry.faults_total),
+                    resident=bool(entry.resident),
+                )
+            )
+        return out
+
     @staticmethod
-    def _view_released(region: "Region") -> None:
+    def _view_released(region: Region) -> None:
         region._view_count -= 1
 
     def view(self, start: int = 0, stop: Optional[int] = None,
@@ -298,6 +394,7 @@ class Region:
                 f"cannot close Region: {self._view_count} outstanding "
                 "view() result(s)"
             )
+        self._pool._regions.discard(self)
         if not self._pool.closed:
             _lib.fc_region_destroy(self._region)
         self._region = None
@@ -334,7 +431,7 @@ class Region:
             f"Region indices must be integers or slices, not {type(key).__name__}"
         )
 
-    def __enter__(self) -> "Region":
+    def __enter__(self) -> Region:
         return self
 
     def __exit__(self, *exc_info) -> None:
@@ -363,10 +460,47 @@ class Pool:
             errno = ctypes.get_errno()
             raise OSError(errno, os.strerror(errno))
         self._handle: Optional[int] = handle
-        self._regions: "weakref.WeakSet[Region]" = weakref.WeakSet()
-        self.Region: Callable[[Sequence[int], FillChunkFn], Region] = (
-            lambda chunk_sizes, fill_chunk: Region(self, chunk_sizes, fill_chunk)
+        self._regions: set[Region] = set()
+
+    def create_region(self, chunk_sizes: Sequence[int],
+                      fill_chunk: FillChunkFn) -> Region:
+        region = Region(self, chunk_sizes, fill_chunk)
+        self._regions.add(region)
+        return region
+
+    def _debug_lru_queue(self) -> list[_PoolLruEntry]:
+        if self._handle is None:
+            raise ValueError("Pool is closed")
+
+        region_by_ptr: dict[int, Region] = {}
+        for region in self._regions:
+            if region._region is not None:
+                region_by_ptr[int(region._region)] = region
+
+        probe = (_CDebugPoolLruEntry * 1)()
+        count = ctypes.c_uint32()
+        _lib.fc_pool_debug_lru_queue(
+            self._handle, probe, len(probe), ctypes.byref(count)
         )
+
+        entries = (_CDebugPoolLruEntry * max(1, int(count.value)))()
+        _lib.fc_pool_debug_lru_queue(
+            self._handle, entries, len(entries), ctypes.byref(count)
+        )
+
+        out: list[_PoolLruEntry] = []
+        for i in range(int(count.value)):
+            entry = entries[i]
+            region = region_by_ptr[int(entry.region)]
+            out.append(
+                _PoolLruEntry(
+                    region=region,
+                    chunk=int(entry.chunk),
+                    size=int(entry.size),
+                    faults_total=int(entry.faults_total),
+                )
+            )
+        return out
 
     @property
     def closed(self) -> bool:
@@ -380,7 +514,7 @@ class Pool:
         _lib.fc_pool_destroy(self._handle)
         self._handle = None
 
-    def __enter__(self) -> "Pool":
+    def __enter__(self) -> Pool:
         return self
 
     def __exit__(self, *exc_info) -> None:

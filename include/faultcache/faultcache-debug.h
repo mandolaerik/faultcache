@@ -24,6 +24,26 @@ struct fc_region_debug_stats {
     uint32_t faults_handled;  /* resolve passes (mremap installs) done so far */
 };
 
+struct fc_region_debug_lru_entry {
+    uint32_t chunk;
+    uint64_t size;
+    uint64_t faults_total;
+    uint8_t resident;
+};
+
+struct fc_pool_debug_lru_entry {
+    const fc_region_t *region;
+    uint32_t chunk;
+    uint64_t size;
+    uint64_t faults_total;
+};
+
+struct fc_region_debug_lru_stats {
+    uint64_t resident_bytes;
+    uint32_t resident_chunks;
+    uint64_t fault_events_total;
+};
+
 /*
  * Fills *out with a snapshot of region's current fault-handling state.
  * Never triggers a fault itself. Safe to call from any thread.
@@ -33,6 +53,30 @@ struct fc_region_debug_stats {
  */
 void fc_region_debug_stats(const fc_region_t *region,
                            struct fc_region_debug_stats *out);
+
+/* Fills *out with a snapshot of region-local LRU counters. */
+void fc_region_debug_lru_stats(const fc_region_t *region,
+                               struct fc_region_debug_lru_stats *out);
+
+/*
+ * Copies the pool-global resident queue from MRU to LRU into `out_entries`.
+ * Each entry is exposed as (region pointer, chunk index).
+ * The caller passes `max_entries` as the size of `out_entries`; `*out_count`
+ * receives the total number of resident chunks in the pool.
+ *
+ * `pool`, `out_entries`, and `out_count` must be non-nullptr.
+ */
+void fc_pool_debug_lru_queue(const fc_pool_t *pool,
+                             struct fc_pool_debug_lru_entry *out_entries,
+                             uint32_t max_entries,
+                             uint32_t *out_count);
+
+/*
+ * Copies the per-chunk persistent fault-history table into `out_entries`.
+ * `out_entries` must have exactly region->nchunks entries.
+ */
+void fc_region_debug_lru_history(const fc_region_t *region,
+                                 struct fc_region_debug_lru_entry *out_entries);
 
 /*
  * Overrides what happens when the library detects a caller bug (nullptr/

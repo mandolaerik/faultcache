@@ -44,6 +44,16 @@
  * can unlink in O(1) given the handle directly (no scan by address
  * needed, unlike the fault path -- see find_region_locked()).
  */
+struct fc_region;
+
+struct fc_chunk_lru {
+    struct fc_chunk_lru *next;
+    struct fc_chunk_lru *prev;
+    struct fc_region *region;
+    uint32_t chunk;
+    bool resident;
+};
+
 struct fc_region {
     struct fc_region *next;
     struct fc_region *prev;
@@ -57,6 +67,15 @@ struct fc_region {
     uint32_t nchunks;
     size_t *chunk_start; /* prefix sums, nchunks+1 entries */
     bool *initialized;   /* nchunks entries, guarded by the owning pool's lock */
+
+    /* Phase-1 LRU metadata: resident chunks are held in a doubly-linked
+     * queue ordered by recency, with a per-chunk persistent fault counter.
+     * Shared pages are intentionally left for later. */
+    struct fc_chunk_lru *chunk_lru; /* nchunks entries */
+    uint64_t *chunk_faults_total;  /* nchunks entries, survives eviction */
+    size_t resident_bytes;
+    uint32_t resident_chunks;
+    uint64_t fault_events_total;
 
     fc_fill_chunk_fn_t fill_chunk;
     const void *user_data;
@@ -72,6 +91,9 @@ struct fc_pool {
      * this pool -- coarse (one pool-wide critical section per fault
      * rather than per-region/per-chunk), accepted for this first pass. */
     pthread_mutex_t lock;
+    /* Pool-global MRU/LRU queue. Nodes are region-owned chunks and may
+     * freely interleave chunks from different regions. */
+    struct fc_chunk_lru lru_head; /* sentinel; next=MRU, prev=LRU */
     /* Sentinel node of the intrusive circular doubly-linked region
      * list: only .next/.prev are ever used on this node itself (all
      * other fields stay zeroed and untouched). Real regions run from
@@ -145,6 +167,45 @@ static uint32_t find_chunk(const struct fc_region *r, size_t off) {
     return lo;
 }
 
+static void lru_init(struct fc_region *r) {
+    r->chunk_lru = calloc(r->nchunks, sizeof(*r->chunk_lru));
+    r->chunk_faults_total = calloc(r->nchunks, sizeof(*r->chunk_faults_total));
+    FC_ASSERT(r->chunk_lru && r->chunk_faults_total);
+    r->resident_bytes = 0;
+    r->resident_chunks = 0;
+    r->fault_events_total = 0;
+
+    for (uint32_t i = 0; i < r->nchunks; i++) {
+        r->chunk_lru[i].region = r;
+        r->chunk_lru[i].chunk = i;
+        r->chunk_lru[i].resident = false;
+    }
+}
+
+static void lru_unlink(struct fc_chunk_lru *node) {
+    if (!node->resident)
+        return;
+    node->prev->next = node->next;
+    node->next->prev = node->prev;
+    node->next = node->prev = nullptr;
+    node->resident = false;
+}
+
+static void lru_insert_mru(struct fc_pool *pool, struct fc_chunk_lru *node) {
+    if (node->resident)
+        lru_unlink(node);
+    node->next = pool->lru_head.next;
+    node->prev = &pool->lru_head;
+    pool->lru_head.next->prev = node;
+    pool->lru_head.next = node;
+    node->resident = true;
+}
+
+static void lru_unlink_region_chunks(struct fc_region *r) {
+    for (uint32_t i = 0; i < r->nchunks; i++)
+        lru_unlink(&r->chunk_lru[i]);
+}
+
 /*
  * Resolves the chunk (and any page-sharing neighbors, since chunk
  * boundaries need not be page-aligned) covering `fault_off` within `r`,
@@ -157,6 +218,7 @@ static uint32_t find_chunk(const struct fc_region *r, size_t off) {
  * handler and lets the faulting access retry.
  */
 static void resolve_fault_locked(struct fc_region *r, size_t fault_off) {
+    struct fc_pool *pool = r->pool;
     uint32_t c0 = find_chunk(r, fault_off);
     /* segv_handler() already re-checks !initialized[c0] under the same
      * held lock right before calling this, with no window for another
@@ -198,6 +260,14 @@ static void resolve_fault_locked(struct fc_region *r, size_t fault_off) {
         r->fill_chunk(i, dst, chunk_size, r->user_data);
         r->initialized[i] = true;
         newly_resolved++;
+
+        r->chunk_faults_total[i]++;
+        r->fault_events_total++;
+        if (!r->chunk_lru[i].resident) {
+            lru_insert_mru(pool, &r->chunk_lru[i]);
+            r->resident_bytes += chunk_size;
+            r->resident_chunks++;
+        }
     }
 
     /* Drop to read-only BEFORE installing at the target address (see
@@ -368,6 +438,7 @@ fc_pool_t *fc_pool_create(size_t target_size) {
     if (!pool)                 /* GCOVR_EXCL_LINE: OOM, needs fault injection */
         return nullptr;           /* GCOVR_EXCL_LINE */
     pthread_mutex_init(&pool->lock, nullptr);
+    pool->lru_head.next = pool->lru_head.prev = &pool->lru_head;
     pool->regions.next = pool->regions.prev = &pool->regions;
 
     pthread_mutex_lock(&g_pools_lock);
@@ -381,6 +452,8 @@ static void region_free(struct fc_region *r) {
     munmap(r->base, r->mapped_size);
     free(r->chunk_start);
     free(r->initialized);
+    free(r->chunk_lru);
+    free(r->chunk_faults_total);
     free(r);
 }
 
@@ -399,6 +472,7 @@ void fc_pool_destroy(fc_pool_t *pool) {
     while (pool->regions.next != &pool->regions) {
         struct fc_region *r = pool->regions.next;
         region_list_remove(r);
+        lru_unlink_region_chunks(r);
         region_free(r);
     }
     pthread_mutex_destroy(&pool->lock);
@@ -453,6 +527,8 @@ fc_region_t *fc_region_create(fc_pool_t *pool, uint32_t nchunks,
     /* Same survive-it-needs-a-test rationale as the calloc/malloc above. */
     FC_ASSERT(r->base != MAP_FAILED);
 
+    lru_init(r);
+
     r->pool = pool;
     pthread_mutex_lock(&pool->lock);
     region_list_insert(&pool->regions, r);
@@ -478,6 +554,7 @@ void fc_region_destroy(fc_region_t *region) {
 
     struct fc_pool *pool = region->pool;
     pthread_mutex_lock(&pool->lock);
+    lru_unlink_region_chunks(region);
     region_list_remove(region);
     pthread_mutex_unlock(&pool->lock);
 
@@ -506,5 +583,65 @@ void fc_region_debug_stats(const fc_region_t *region,
     out->nchunks = region->nchunks;
     out->chunks_resolved = region->chunks_resolved;
     out->faults_handled = region->faults_handled;
+    pthread_mutex_unlock(&pool->lock);
+}
+
+void fc_region_debug_lru_stats(const fc_region_t *region,
+                               struct fc_region_debug_lru_stats *out) {
+    if (!region || !out)
+        fc_misuse("fc_region_debug_lru_stats: nullptr region or out");
+
+    struct fc_pool *pool = region->pool;
+    pthread_mutex_lock(&pool->lock);
+    out->resident_bytes = region->resident_bytes;
+    out->resident_chunks = region->resident_chunks;
+    out->fault_events_total = region->fault_events_total;
+    pthread_mutex_unlock(&pool->lock);
+}
+
+void fc_pool_debug_lru_queue(const fc_pool_t *pool,
+                             struct fc_pool_debug_lru_entry *out_entries,
+                             uint32_t max_entries,
+                             uint32_t *out_count) {
+    if (!pool || !out_entries || !out_count)
+        fc_misuse("fc_pool_debug_lru_queue: nullptr input");
+
+    struct fc_pool *pool_mut = (struct fc_pool *)pool;
+    pthread_mutex_lock(&pool_mut->lock);
+    uint32_t total = 0;
+    for (struct fc_chunk_lru *node = pool_mut->lru_head.next;
+         node != &pool_mut->lru_head; node = node->next) {
+        uint32_t chunk = node->chunk;
+        const struct fc_region *region = node->region;
+        total++;
+        if (total <= max_entries) {
+            out_entries[total - 1] = (struct fc_pool_debug_lru_entry) {
+                .region = region,
+                .chunk = chunk,
+                .size = (uint64_t)(region->chunk_start[chunk + 1]
+                                   - region->chunk_start[chunk]),
+                .faults_total = region->chunk_faults_total[chunk],
+            };
+        }
+    }
+    *out_count = total;
+    pthread_mutex_unlock(&pool_mut->lock);
+}
+
+void fc_region_debug_lru_history(const fc_region_t *region,
+                                 struct fc_region_debug_lru_entry *out_entries) {
+    if (!region || !out_entries)
+        fc_misuse("fc_region_debug_lru_history: nullptr input");
+
+    struct fc_pool *pool = region->pool;
+    pthread_mutex_lock(&pool->lock);
+    for (uint32_t chunk = 0; chunk < region->nchunks; chunk++) {
+        out_entries[chunk] = (struct fc_region_debug_lru_entry) {
+            .chunk = chunk,
+            .size = (uint64_t)(region->chunk_start[chunk + 1] - region->chunk_start[chunk]),
+            .faults_total = region->chunk_faults_total[chunk],
+            .resident = region->chunk_lru[chunk].resident ? 1 : 0,
+        };
+    }
     pthread_mutex_unlock(&pool->lock);
 }
