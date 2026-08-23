@@ -83,6 +83,27 @@ static void call_client_region_destroy_null(void) {
     f(nullptr);
 }
 
+static fc_client_region_t *call_client_region_create_null_pool(void) {
+    fc_client_region_t *(*f)(fc_client_pool_t *, int, size_t, const void *,
+                              char **) =
+        (fc_client_region_t *(*)(fc_client_pool_t *, int, size_t,
+                                  const void *,
+                                  char **))fc_client_region_create;
+    return f(nullptr, -1, 0, nullptr, nullptr);
+}
+
+static const void *call_client_region_base_null(void) {
+    const void *(*f)(const fc_client_region_t *) =
+        (const void *(*)(const fc_client_region_t *))fc_client_region_base;
+    return f(nullptr);
+}
+
+static size_t call_client_region_size_null(void) {
+    size_t (*f)(const fc_client_region_t *) =
+        (size_t (*)(const fc_client_region_t *))fc_client_region_size;
+    return f(nullptr);
+}
+
 static void test_hooked_misuse_cases(void) {
     EXPECT_MISUSE(call_region_create_nulls(),
                   "fc_region_create");
@@ -90,7 +111,17 @@ static void test_hooked_misuse_cases(void) {
     EXPECT_MISUSE(call_region_destroy_null(), "fc_region_destroy");
     EXPECT_MISUSE(call_region_size_null(), "fc_region_size");
     EXPECT_MISUSE(fc_region_debug_stats(nullptr, nullptr), "fc_region_debug_stats");
+    EXPECT_MISUSE(fc_region_debug_lru_stats(nullptr, nullptr),
+                  "fc_region_debug_lru_stats");
+    EXPECT_MISUSE(fc_region_debug_lru_history(nullptr, nullptr),
+                  "fc_region_debug_lru_history");
+    EXPECT_MISUSE(fc_pool_debug_lru_queue(nullptr, nullptr, 0, nullptr),
+                  "fc_pool_debug_lru_queue");
     EXPECT_MISUSE(call_client_region_destroy_null(), "fc_client_region_destroy");
+    EXPECT_MISUSE(call_client_region_create_null_pool(),
+                  "fc_client_region_create");
+    EXPECT_MISUSE(call_client_region_base_null(), "fc_client_region_base");
+    EXPECT_MISUSE(call_client_region_size_null(), "fc_client_region_size");
 }
 
 /* No hook installed here -- confirms the real default behavior (print +
@@ -509,6 +540,26 @@ static void test_client_pool_destroy_null(void) {
     fc_client_pool_destroy(nullptr); /* no-op, must not crash */
 }
 
+/* The client backend has no bounded cache yet, so any nonzero target is
+ * rejected outright rather than silently ignored. */
+static void test_client_pool_rejects_target_size(void) {
+    errno = 0;
+    CHECK(fc_client_pool_create(4096) == nullptr);
+    CHECK(errno == EINVAL);
+}
+
+/* A nonzero descriptor_size with a nullptr descriptor is a caller bug the
+ * wire protocol can't express -- caught before any I/O. */
+static void test_client_region_create_null_descriptor(void) {
+    fc_client_pool_t *pool = fc_client_pool_create(0);
+    CHECK(pool != nullptr);
+
+    EXPECT_MISUSE(fc_client_region_create(pool, -1, 8, nullptr, nullptr),
+                  "fc_client_region_create");
+
+    fc_client_pool_destroy(pool);
+}
+
 /* Descriptor too large to ever fit in a wire message: resolve_descriptor()
  * must reject it (EMSGSIZE) before touching server_fd or dereferencing
  * descriptor at all, so this needs neither a real server nor a valid fd. */
@@ -561,6 +612,8 @@ int main(void) {
     test_invalid_chunk_sizes();
     test_pool_destroy_not_head();
     test_client_pool_destroy_null();
+    test_client_pool_rejects_target_size();
+    test_client_region_create_null_descriptor();
     test_client_region_create_oversized_descriptor();
     test_default_abort_still_works();
     test_segv_passthrough();

@@ -22,17 +22,17 @@ def test_pool_maxsize_default_is_unbounded():
 
 
 # Layout where both straddling chunks own exclusive pages on either side of a
-# page they share, so neither can ever be resolved or evicted on its own:
+# page they share:
 #   chunk0: [0, PAGE + 100)      page 0 exclusive, plus the head of page 1
-#   chunk1: [PAGE + 100, 3*PAGE) tail of page 1, plus pages 2 exclusive
-#   chunk2: page 3, chunk3: page 4 (page-aligned, each its own group)
+#   chunk1: [PAGE + 100, 3*PAGE) tail of page 1, plus page 2 exclusive
+#   chunk2: page 3, chunk3: page 4 (page-aligned, no sharing at all)
 STRADDLE_SIZES = [PAGE + 100, 2 * PAGE - 100, PAGE, PAGE]
 STRADDLE_B_EXCLUSIVE = 2 * PAGE
 STRADDLE_C = 3 * PAGE
 STRADDLE_D = 4 * PAGE
 
 
-def test_shared_page_merges_straddling_chunks_into_one_group():
+def test_exclusive_page_fault_does_not_pull_in_page_sharing_neighbour():
     counts = [0, 0, 0, 0]
 
     def fill_chunk(chunk, buf):
@@ -42,49 +42,93 @@ def test_shared_page_merges_straddling_chunks_into_one_group():
     with faultcache.Pool() as pool:
         region = pool.create_region(STRADDLE_SIZES, fill_chunk)
 
-        # Faulting on chunk0's exclusive page still has to fill chunk1 too: the
-        # shared page cannot be published half-populated.
+        # Page 0 belongs to chunk0 alone, so chunk1 stays untouched even
+        # though the two share page 1.
         assert region[0] == ord('a')
-        assert counts == [1, 1, 0, 0]
+        assert counts == [1, 0, 0, 0]
 
-        # Both halves of the shared page are valid, without further fills.
-        assert region[PAGE + 99] == ord('a')
-        assert region[PAGE + 100] == ord('b')
+        # Same the other way around, from chunk1's own page.
         assert region[STRADDLE_B_EXCLUSIVE] == ord('b')
         assert counts == [1, 1, 0, 0]
 
-        # The page-aligned neighbour is not dragged into that group.
-        assert region[STRADDLE_C] == ord('c')
-        assert counts == [1, 1, 1, 0]
+        # With both contributors filled, the shared page is published whole.
+        assert region[PAGE + 99] == ord('a')
+        assert region[PAGE + 100] == ord('b')
+        assert counts == [1, 1, 0, 0]
 
 
-def test_shared_page_group_evicts_and_refills_as_a_unit():
+def test_shared_page_touched_first_fills_every_contributor():
     counts = [0, 0, 0, 0]
 
     def fill_chunk(chunk, buf):
         counts[chunk] += 1
         buf[:] = bytes([ord('a') + chunk]) * len(buf)
 
-    with faultcache.Pool(maxsize=4 * PAGE) as pool:
+    with faultcache.Pool() as pool:
         region = pool.create_region(STRADDLE_SIZES, fill_chunk)
 
-        # Three pages resident as one group, plus one page-aligned chunk: the
-        # budget is exactly met, so nothing is evicted yet.
+        # Nothing else can complete the page, so touching it costs both
+        # chunks at once -- but still not the page-aligned neighbours.
+        assert region[PAGE + 100] == ord('b')
+        assert counts == [1, 1, 0, 0]
         assert region[0] == ord('a')
-        assert region[STRADDLE_C] == ord('c')
-        assert counts == [1, 1, 1, 0]
-
-        # Going over budget evicts the whole three-page straddling group.
-        assert region[STRADDLE_D] == ord('d')
-        assert counts == [1, 1, 1, 1]
-
-        # Refilling via chunk1's exclusive page restores both chunks of the
-        # group, and the shared page is whole again.
         assert region[STRADDLE_B_EXCLUSIVE] == ord('b')
-        assert counts == [2, 2, 1, 1]
+        assert counts == [1, 1, 0, 0]
+
+
+def test_eviction_frees_exclusive_pages_and_keeps_shared_ones():
+    counts = [0, 0, 0, 0]
+
+    def fill_chunk(chunk, buf):
+        counts[chunk] += 1
+        buf[:] = bytes([ord('a') + chunk]) * len(buf)
+
+    with faultcache.Pool(maxsize=2 * PAGE) as pool:
+        region = pool.create_region(STRADDLE_SIZES, fill_chunk)
+
+        # Filling chunk1 pushes the pool over budget and evicts chunk0.
+        assert region[0] == ord('a')
+        assert region[STRADDLE_B_EXCLUSIVE] == ord('b')
+        assert counts == [1, 1, 0, 0]
+
+        # Refilling chunk0 must not drag chunk1 along with it.
+        assert region[0] == ord('a')
+        assert counts == [2, 1, 0, 0]
+
+        # No chunk owns the shared page alone, so it was published once and
+        # stays mapped -- readable without a fill even now that chunk1 has
+        # been evicted in turn.
         assert region[PAGE + 99] == ord('a')
         assert region[PAGE + 100] == ord('b')
-        assert counts == [2, 2, 1, 1]
+        assert counts == [2, 1, 0, 0]
+
+
+def test_chunk_sharing_a_page_at_both_ends():
+    # chunk1 straddles two separate shared pages at once: page 0 with chunk0
+    # and page 2 with chunk2, owning only page 1 outright.
+    counts = [0, 0, 0]
+
+    def fill_chunk(chunk, buf):
+        counts[chunk] += 1
+        buf[:] = bytes([ord('a') + chunk]) * len(buf)
+
+    with faultcache.Pool() as pool:
+        region = pool.create_region([100, 2 * PAGE, 100], fill_chunk)
+
+        assert region[PAGE] == ord('b')
+        assert counts == [0, 1, 0]
+
+        # Each shared page still needs its other contributor, one at a time.
+        assert region[0] == ord('a')
+        assert counts == [1, 1, 0]
+        assert region[2 * PAGE] == ord('b')
+        assert counts == [1, 1, 1]
+
+        assert region[99] == ord('a')
+        assert region[100] == ord('b')
+        assert region[2 * PAGE + 99] == ord('b')
+        assert region[2 * PAGE + 100] == ord('c')
+        assert counts == [1, 1, 1]
 
 
 # Written from a preallocated block so that measuring RSS is not swamped by the
@@ -611,8 +655,10 @@ def test_fill_buffer_is_invalidated_after_fill_returns():
 def main():
     tests = [
         test_pool_maxsize_default_is_unbounded,
-        test_shared_page_merges_straddling_chunks_into_one_group,
-        test_shared_page_group_evicts_and_refills_as_a_unit,
+        test_exclusive_page_fault_does_not_pull_in_page_sharing_neighbour,
+        test_shared_page_touched_first_fills_every_contributor,
+        test_eviction_frees_exclusive_pages_and_keeps_shared_ones,
+        test_chunk_sharing_a_page_at_both_ends,
         test_eviction_releases_resident_memory,
         test_basic_region,
         test_debug_stats,

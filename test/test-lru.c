@@ -64,10 +64,49 @@ int main(void) {
     CHECK(p[PAGE] == 'c');
     CHECK(counts[0] == 1 && counts[1] == 1 && counts[2] == 1);
 
-    /* The shared first page was evicted as a unit, so re-touching chunk 0
-     * must re-fill both chunk 0 and chunk 1 together. */
+    /* Chunks 0 and 1 own no page of their own, so evicting them frees
+     * nothing and the page they share stays mapped -- re-reading it must
+     * not fault, let alone re-fill. */
+    fc_region_destroy(region);
+    fc_pool_destroy(pool);
+
+    memset(counts, 0, sizeof(counts));
+
+    /* A chunk bigger than the whole budget: the chunk that was just
+     * resolved is protected from eviction, so the pool stays over its
+     * target rather than throwing away what the caller is reading. */
+    pool = fc_pool_create(PAGE);
+    CHECK(pool != nullptr);
+
+    size_t big_sizes[] = {4 * PAGE};
+    region = fc_region_create(pool, 1, big_sizes, fill_chunk, nullptr);
+    CHECK(region != nullptr);
+
+    p = fc_region_base(region);
+
     CHECK(p[0] == 'a');
-    CHECK(counts[0] == 2 && counts[1] == 2 && counts[2] == 1);
+    CHECK(p[4 * PAGE - 1] == 'a');
+    CHECK(counts[0] == 1);
+
+    fc_region_destroy(region);
+    fc_pool_destroy(pool);
+
+    memset(counts, 0, sizeof(counts));
+
+    /* Destroying a region while a shared page is still half-staged (only
+     * one of its two contributors has been filled) must release the
+     * staging page too. */
+    pool = fc_pool_create(0);
+    CHECK(pool != nullptr);
+
+    size_t partial_sizes[] = {100, 2 * PAGE};
+    region = fc_region_create(pool, 2, partial_sizes, fill_chunk, nullptr);
+    CHECK(region != nullptr);
+
+    p = fc_region_base(region);
+
+    CHECK(p[PAGE] == 'b');
+    CHECK(counts[0] == 0 && counts[1] == 1);
 
     fc_region_destroy(region);
     fc_pool_destroy(pool);

@@ -130,10 +130,9 @@ void fc_rearm_handler(void);
 
 /*
  * Tracks the regions carved out of it (see fc_client_pool_t in
- * faultcache-client.h for the split client/server equivalent). A pool is
- * expected to eventually also own a shared, size-bounded cache of
- * resident chunks (possibly spanning several regions) with LRU eviction;
- * for now it just tracks region lifetimes.
+ * faultcache-client.h for the split client/server equivalent), and owns
+ * a shared, size-bounded cache of resident chunks across all of them,
+ * with LRU eviction.
  */
 typedef struct fc_pool fc_pool_t;
 
@@ -141,6 +140,15 @@ typedef struct fc_pool fc_pool_t;
  * Creates a pool with a target cache size in bytes.
  * `target_size == 0` means "unbounded".
  * Positive values enable bounded LRU eviction.
+ *
+ * The target is a guideline, not a hard cap: eviction can only hand back
+ * whole pages, and a page holding bytes from more than one chunk (which
+ * happens whenever a chunk boundary is not page-aligned) stays resident
+ * for the region's lifetime once populated, since no single chunk owns
+ * it. Regions whose chunk boundaries are mostly page-aligned track the
+ * target closely; a region of many small chunks may exceed it
+ * substantially.
+ *
  * Returns nullptr on failure (errno is set).
  */
 fc_pool_t *fc_pool_create(size_t target_size);
@@ -154,7 +162,7 @@ void fc_pool_destroy(fc_pool_t *pool);
  *
  * `start`/`size` always describe the entire chunk (as given via
  * chunk_sizes[chunk]), never a partial page-aligned fragment of it, even
- * when several chunks are resolved together because they share a page.
+ * when a shared page forces several chunks to be resolved in one go.
  *
  * Called synchronously, inline, on whichever thread first accesses the
  * chunk -- from within the library's SIGSEGV handler, on that thread's

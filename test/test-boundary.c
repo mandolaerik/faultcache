@@ -18,8 +18,8 @@
  *
  * Chunks 0-3 all share page 0 and must resolve together; chunk3 ending
  * exactly on a page boundary must stop the group from cascading into
- * chunk4. Chunks 4-5 share a page and must resolve together, independently
- * of chunks 0-3.
+ * chunk4. Chunk4 owns page 1 outright and must resolve alone, even though
+ * it shares page 2 with chunk5.
  */
 #define NCHUNKS 6
 static int counts[NCHUNKS];
@@ -60,12 +60,17 @@ int main(void) {
           counts[3] == 1);
     CHECK(counts[4] == 0 && counts[5] == 0);
 
-    /* Touch chunk4: must resolve chunks 4-5 together (they share a page),
-     * without re-touching chunks 0-3. */
+    /* Touch chunk4's own page: it shares page 2 with chunk5, but that page
+     * is not what faulted, so chunk5 must stay untouched. */
     CHECK(p[offsets[4] + 10] == 'E');
-    CHECK(counts[4] == 1 && counts[5] == 1);
+    CHECK(counts[4] == 1 && counts[5] == 0);
     CHECK(counts[0] == 1 && counts[1] == 1 && counts[2] == 1 &&
           counts[3] == 1);
+
+    /* Touch the page they do share: chunk4 already contributed its half,
+     * so only chunk5 is still missing. */
+    CHECK(p[offsets[5]] == 'F');
+    CHECK(counts[4] == 1 && counts[5] == 1);
 
     /* Every byte of every chunk must match its own fill pattern. */
     for (int c = 0; c < NCHUNKS; c++) {

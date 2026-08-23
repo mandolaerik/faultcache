@@ -445,7 +445,9 @@ class Pool:
     """Tracks the lifetime of Regions carved out of it.
 
     `maxsize` is the target size in bytes. `0` means unbounded; positive
-    values enable bounded LRU eviction.
+    values enable bounded LRU eviction. The target is a guideline: pages
+    shared between chunks stay resident for the region's lifetime once
+    populated, since no single chunk owns them.
     """
 
     def __init__(self, maxsize: int = 0):
