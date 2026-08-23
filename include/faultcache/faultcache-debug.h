@@ -29,6 +29,7 @@ struct fc_region_debug_lru_entry {
     uint64_t size;
     uint64_t faults_total;
     uint8_t resident;
+    uint8_t cold; /* resident, but demoted past the pool's midpoint */
 };
 
 struct fc_pool_debug_lru_entry {

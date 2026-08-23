@@ -277,6 +277,35 @@ def test_debug_lru_queue_and_history() -> None:
         assert [entry.faults_total for entry in history] == [1, 1]
 
 
+def test_midpoint_demotes_cold_chunks() -> None:
+    # A bounded pool takes read access away from the half of the queue
+    # that is furthest from the front, so that reading those chunks again
+    # becomes observable as a fault.
+    def fill_chunk(chunk: int, buf: memoryview) -> None:
+        buf[:] = bytes([ord('a') + chunk]) * len(buf)
+
+    with faultcache.Pool(maxsize=4 * PAGE) as pool:
+        region = pool.create_region([PAGE] * 5, fill_chunk)
+
+        for chunk in range(4):
+            assert region[chunk * PAGE] == ord('a') + chunk
+
+        history = region._debug_lru_history()
+        assert [entry.resident for entry in history] == \
+            [True, True, True, True, False]
+        assert [entry.cold for entry in history] == \
+            [True, True, False, False, False]
+
+        # Touching a demoted chunk faults, hands its access back and makes
+        # it the most recent one -- without re-running fill_chunk.
+        assert region[0] == ord('a')
+
+        history = region._debug_lru_history()
+        assert [entry.cold for entry in history] == \
+            [False, True, True, False, False]
+        assert [entry.faults_total for entry in history] == [2, 1, 1, 1, 0]
+
+
 def test_region_identity_hash_behavior() -> None:
     def fill_chunk(chunk: int, buf: memoryview) -> None:
         buf[:] = b"x" * len(buf)
@@ -663,6 +692,7 @@ def main():
         test_basic_region,
         test_debug_stats,
         test_debug_lru_queue_and_history,
+        test_midpoint_demotes_cold_chunks,
         test_region_identity_hash_behavior,
         test_boundary_sharing_group,
         test_slice_step,

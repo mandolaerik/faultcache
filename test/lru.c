@@ -9,13 +9,14 @@
 #include <string.h>
 
 #define PAGE 4096
+#define NCHUNKS 5
 
-static int counts[3];
+static int counts[NCHUNKS];
 
 static void fill_chunk(uint32_t chunk, void *start, size_t size,
                         const void *user_data) {
     (void)user_data;
-    CHECK(chunk < 3);
+    CHECK(chunk < NCHUNKS);
     counts[chunk]++;
     memset(start, 'a' + (int)chunk, size);
 }
@@ -107,6 +108,47 @@ int main(void) {
 
     CHECK(p[PAGE] == 'b');
     CHECK(counts[0] == 0 && counts[1] == 1);
+
+    fc_region_destroy(region);
+    fc_pool_destroy(pool);
+
+    memset(counts, 0, sizeof(counts));
+
+    /* Midpoint protection: reads of a resident chunk are invisible to
+     * the library, so recency can only be observed by demoting the cold
+     * half of the queue and waiting for it to fault back in. Fill four
+     * page-sized chunks to fill the budget exactly -- that leaves chunks
+     * 0 and 1 demoted -- then read chunk 0 again and add a fifth chunk to
+     * force one eviction. */
+    pool = fc_pool_create(4 * PAGE);
+    CHECK(pool != nullptr);
+
+    size_t even_sizes[] = {PAGE, PAGE, PAGE, PAGE, PAGE};
+    region = fc_region_create(pool, NCHUNKS, even_sizes, fill_chunk, nullptr);
+    CHECK(region != nullptr);
+
+    p = fc_region_base(region);
+
+    for (uint32_t c = 0; c < 4; c++)
+        CHECK(p[c * PAGE] == 'a' + (int)c);
+    CHECK(counts[0] == 1 && counts[1] == 1 && counts[2] == 1
+          && counts[3] == 1 && counts[4] == 0);
+
+    /* Touching chunk 0 faults on its demoted pages and makes it the most
+     * recently used one, without re-running fill_chunk(). */
+    CHECK(p[0] == 'a');
+    CHECK(counts[0] == 1);
+
+    CHECK(p[4 * PAGE] == 'e');
+    CHECK(counts[4] == 1);
+
+    /* Chunk 1 is now the coldest and was evicted in chunk 4's favour,
+     * while the freshly touched chunk 0 survived. */
+    CHECK(p[0] == 'a');
+    CHECK(counts[0] == 1);
+
+    CHECK(p[PAGE] == 'b');
+    CHECK(counts[1] == 2);
 
     fc_region_destroy(region);
     fc_pool_destroy(pool);

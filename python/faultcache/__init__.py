@@ -63,6 +63,7 @@ class _LruEntry(NamedTuple):
     size: int
     faults_total: int
     resident: bool
+    cold: bool
 
 
 class _PoolLruEntry(NamedTuple):
@@ -150,6 +151,7 @@ class _CDebugLruEntry(ctypes.Structure):
         ("size", ctypes.c_uint64),
         ("faults_total", ctypes.c_uint64),
         ("resident", ctypes.c_uint8),
+        ("cold", ctypes.c_uint8),
     ]
 
 
@@ -333,6 +335,7 @@ class Region:
                     size=int(entry.size),
                     faults_total=int(entry.faults_total),
                     resident=bool(entry.resident),
+                    cold=bool(entry.cold),
                 )
             )
         return out

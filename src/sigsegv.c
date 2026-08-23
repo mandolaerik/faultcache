@@ -24,6 +24,14 @@
  * been filled. Each chunk's slice of a shared page is copied into a
  * staging page, and the page is installed when the last contributor
  * arrives -- see shared_page_t.
+ *
+ * A resident chunk is never touched again by this library, so reads of
+ * it are invisible and the LRU queue would only ever record "filled
+ * longest ago", not "coldest". To get real recency, a bounded pool
+ * splits its queue in half by bytes and takes read access away from
+ * everything past that midpoint (the contents stay); the next touch
+ * faults, hands the access back and moves the chunk to the front. Only
+ * the cold half pays for this, and only once per demotion.
  */
 #define _GNU_SOURCE
 #include "faultcache/faultcache.h"
@@ -47,6 +55,7 @@ typedef struct chunk_lru {
     fc_region_t *region;
     uint32_t chunk;
     bool resident;
+    bool cold; /* resident but past the midpoint, so its pages are PROT_NONE */
 } chunk_lru_t;
 
 /*
@@ -125,6 +134,11 @@ struct fc_pool {
     /* Pool-global MRU/LRU queue. Nodes are region-owned chunks and may
      * freely interleave chunks from different regions. */
     chunk_lru_t lru_head; /* sentinel; next=MRU, prev=LRU */
+    /* Last node of the hot half, i.e. the queue's midpoint by bytes;
+     * &lru_head when the hot half is empty. hot_bytes is the size of
+     * everything from lru_head.next through midpoint. */
+    chunk_lru_t *midpoint;
+    size_t hot_bytes;
     /* Sentinel node of the intrusive circular doubly-linked region
      * list: only .next/.prev are ever used on this node itself (all
      * other fields stay zeroed and untouched). Real regions run from
@@ -231,16 +245,19 @@ static shared_page_t *find_shared_page(const fc_region_t *r,
 }
 
 /*
- * Whether the page holding `off` is currently installed. Not the same as
- * "its chunk is initialized": a shared page needs every contributor, and
- * once published it stays put even after a contributor is evicted.
+ * Whether the page holding `off` can currently be read. Not the same as
+ * "its chunk is initialized": a shared page needs every contributor (and
+ * once published it stays put even after a contributor is evicted),
+ * while a chunk demoted past the midpoint keeps its contents but not its
+ * read access.
  */
-static bool page_installed(const fc_region_t *r, size_t off) {
+static bool page_readable(const fc_region_t *r, size_t off) {
     size_t page = page_floor(off, r->page_size);
     const shared_page_t *sp = find_shared_page(r, page);
     if (sp)
         return sp->mapped;
-    return r->initialized[find_chunk(r, page)];
+    uint32_t c = find_chunk(r, page);
+    return r->initialized[c] && !r->chunk_lru[c].cold;
 }
 
 /* Collects the pages holding a chunk boundary that is not page-aligned;
@@ -300,8 +317,26 @@ static void lru_init(fc_region_t *r) {
     }
 }
 
-static void lru_unlink(chunk_lru_t *node) {
+static size_t lru_node_size(const chunk_lru_t *node) {
+    const fc_region_t *r = node->region;
+    return r->chunk_start[node->chunk + 1] - r->chunk_start[node->chunk];
+}
+
+/* Only the chunk's exclusive pages: the ones it shares with a neighbour
+ * belong to no single chunk, so no single chunk may hide them. */
+static void chunk_set_prot(const fc_region_t *r, uint32_t chunk, int prot) {
+    size_t lo, hi;
+    chunk_exclusive_pages(r, chunk, &lo, &hi);
+    if (hi > lo)
+        FC_ASSERT(mprotect((char *)r->base + lo, hi - lo, prot) == 0);
+}
+
+static void lru_unlink(fc_pool_t *pool, chunk_lru_t *node) {
     FC_ASSERT(node->resident);
+    if (pool->midpoint == node)
+        pool->midpoint = node->prev;
+    if (!node->cold)
+        pool->hot_bytes -= lru_node_size(node);
     node->prev->next = node->next;
     node->next->prev = node->prev;
     node->next = node->prev = nullptr;
@@ -315,6 +350,41 @@ static void lru_insert_mru(fc_pool_t *pool, chunk_lru_t *node) {
     pool->lru_head.next->prev = node;
     pool->lru_head.next = node;
     node->resident = true;
+    node->cold = false;
+    pool->hot_bytes += lru_node_size(node);
+    if (pool->midpoint == &pool->lru_head)
+        pool->midpoint = node;
+}
+
+/*
+ * Walks the midpoint back towards the front until at most half the
+ * resident bytes are still readable, taking read access away from every
+ * node it passes. The MRU node is never demoted: it is the chunk whose
+ * fault is being serviced right now, and hiding it again would just
+ * fault straight back in.
+ */
+static void lru_rebalance(fc_pool_t *pool) {
+    /* An unbounded pool never evicts, so it has nothing to learn from
+     * paying for these faults. */
+    if (pool->target_size == 0)
+        return;
+
+    while (pool->hot_bytes > pool->resident_bytes / 2
+           && pool->midpoint != pool->lru_head.next) {
+        chunk_lru_t *node = pool->midpoint;
+        chunk_set_prot(node->region, node->chunk, PROT_NONE);
+        node->cold = true;
+        pool->hot_bytes -= lru_node_size(node);
+        pool->midpoint = node->prev;
+    }
+}
+
+/* Hands a demoted chunk its read access back and makes it the MRU. */
+static void lru_promote(fc_pool_t *pool, chunk_lru_t *node) {
+    FC_ASSERT(node->cold);
+    chunk_set_prot(node->region, node->chunk, PROT_READ);
+    lru_unlink(pool, node);
+    lru_insert_mru(pool, node);
 }
 
 static void lru_forget_chunk(fc_pool_t *pool, fc_region_t *r,
@@ -323,8 +393,8 @@ static void lru_forget_chunk(fc_pool_t *pool, fc_region_t *r,
     if (!node->resident)
         return;
 
-    size_t chunk_size = r->chunk_start[chunk + 1] - r->chunk_start[chunk];
-    lru_unlink(node);
+    size_t chunk_size = lru_node_size(node);
+    lru_unlink(pool, node);
     r->initialized[chunk] = false;
     r->resident_bytes -= chunk_size;
     r->resident_chunks--;
@@ -490,10 +560,11 @@ static void fill_chunk_locked(fc_region_t *r, uint32_t c) {
 }
 
 /*
- * Makes the page covering `fault_off` readable. For a page owned by a
- * single chunk that means filling just that chunk; for a page shared
- * between chunks it means filling every contributor that is still
- * missing, since the page cannot be published half-populated. Called
+ * Makes the page covering `fault_off` readable again. That means filling
+ * the chunk that owns it (or, for a page shared between chunks, every
+ * contributor that is still missing, since the page cannot be published
+ * half-populated), or -- if the chunk is still populated and merely
+ * demoted past the midpoint -- just handing its read access back. Called
  * with `r`'s pool lock already held (kept held for the duration,
  * including while running `fill_chunk` -- see the fc_pool_t comment
  * above).
@@ -504,26 +575,32 @@ static void resolve_fault_locked(fc_region_t *r, size_t fault_off) {
     shared_page_t *sp = find_shared_page(r, page);
     uint32_t lo, hi;
 
-    /* segv_handler() already re-checks !page_installed() under the same
+    /* segv_handler() already re-checks !page_readable() under the same
      * held lock right before calling this, with no window for another
      * thread to intervene in between. */
     if (sp) {
         FC_ASSERT(!sp->mapped);
         lo = sp->first_chunk;
         hi = sp->last_chunk;
+        for (uint32_t c = lo; c <= hi; c++) {
+            if (!r->initialized[c])
+                fill_chunk_locked(r, c);
+        }
+        /* Every contributor has now staged its slice, so the page is up. */
     } else {
         lo = hi = find_chunk(r, page);
-        FC_ASSERT(!r->initialized[lo]);
+        if (r->initialized[lo]) {
+            lru_promote(pool, &r->chunk_lru[lo]);
+            r->chunk_faults_total[lo]++;
+            r->fault_events_total++;
+        } else {
+            fill_chunk_locked(r, lo);
+        }
     }
-
-    for (uint32_t c = lo; c <= hi; c++) {
-        if (!r->initialized[c])
-            fill_chunk_locked(r, c);
-    }
-    /* Every contributor has now staged its slice, so the page is up. */
-    FC_ASSERT(page_installed(r, page));
+    FC_ASSERT(page_readable(r, page));
 
     evict_until_within_budget(pool, r, lo, hi);
+    lru_rebalance(pool);
 
     r->faults_handled++;
 }
@@ -583,11 +660,11 @@ static void segv_handler(int sig, siginfo_t *info, void *ucontext) {
         if (r) {
             size_t fault_off = addr - (uintptr_t)r->base;
             /* An address inside a known region whose page is already
-             * installed is not a "chunk not populated yet" fault -- it's
+             * readable is not a "chunk not populated yet" fault -- it's
              * a genuine violation (almost always a write to the now
              * read-only chunk). Don't swallow it: fall through to the
              * crash path below, same as an address outside any region. */
-            if (!page_installed(r, fault_off)) {
+            if (!page_readable(r, fault_off)) {
                 g_resolving_fault = true;
                 resolve_fault_locked(r, fault_off);
                 g_resolving_fault = false;
@@ -681,6 +758,8 @@ fc_pool_t *fc_pool_create(size_t target_size) {
     pool->target_size = target_size;
     pool->resident_bytes = 0;
     pool->lru_head.next = pool->lru_head.prev = &pool->lru_head;
+    pool->midpoint = &pool->lru_head;
+    pool->hot_bytes = 0;
     pool->regions.next = pool->regions.prev = &pool->regions;
 
     pthread_mutex_lock(&g_pools_lock);
@@ -891,6 +970,7 @@ void fc_region_debug_lru_history(const fc_region_t *region,
             .size = (uint64_t)(region->chunk_start[chunk + 1] - region->chunk_start[chunk]),
             .faults_total = region->chunk_faults_total[chunk],
             .resident = region->chunk_lru[chunk].resident ? 1 : 0,
+            .cold = region->chunk_lru[chunk].cold ? 1 : 0,
         };
     }
     pthread_mutex_unlock(&pool->lock);
