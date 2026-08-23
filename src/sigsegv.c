@@ -7,7 +7,7 @@
  * raises SIGSEGV, caught by a process-wide handler installed on first
  * use, which resolves the fault SYNCHRONOUSLY on the very thread that
  * touched it (no separate handler thread, no userfaultfd -- contrast
- * with the client/server backend in faultcache.c, which delegates to a
+ * with the client/server backend in client.c, which delegates to a
  * separate server process over uffd).
  *
  * Resolving a chunk populates a private scratch mapping first, then
@@ -28,7 +28,7 @@
 #define _GNU_SOURCE
 #include "faultcache/faultcache.h"
 #include "faultcache/faultcache-debug.h"
-#include "faultcache-internal.h"
+#include "internal.h"
 
 #include <errno.h>
 #include <pthread.h>
@@ -562,7 +562,7 @@ static void segv_handler(int sig, siginfo_t *info, void *ucontext) {
          * fprintf().
          *
          * Tested via test_nested_fault_across_regions_is_fatal
-         * (test-misuse.c), which forks and triggers this for real; the
+         * (test/misuse.c), which forks and triggers this for real; the
          * child terminates via fc_misuse()'s abort(), which flushes
          * coverage counters itself before dying (see
          * fc_flush_coverage_before_death()). */

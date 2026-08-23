@@ -11,7 +11,7 @@
 #include "faultcache/faultcache.h"
 #include "faultcache/faultcache-client.h"
 #include "faultcache/faultcache-debug.h"
-#include "test-util.h"
+#include "util.h"
 
 #include <errno.h>
 #include <setjmp.h>

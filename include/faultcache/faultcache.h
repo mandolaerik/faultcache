@@ -176,7 +176,7 @@ typedef void (*fc_fill_chunk_fn_t)(uint32_t chunk, void *start, size_t size,
 
 /* Opaque handle to a region created by fc_region_create(), tracked by
  * its owning pool in an intrusive doubly-linked list (see
- * src/faultcache-sigsegv.c) so fc_region_destroy() is O(1). Not a
+ * src/sigsegv.c) so fc_region_destroy() is O(1). Not a
  * pointer to the region's own memory -- use fc_region_base() for that. */
 typedef struct fc_region fc_region_t;
 

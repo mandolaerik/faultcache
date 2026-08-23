@@ -302,7 +302,7 @@ def test_region_identity_hash_behavior() -> None:
 
 
 def test_boundary_sharing_group():
-    # Mirrors test/test-boundary.c: chunks not aligned to page boundaries
+    # Mirrors test/boundary.c: chunks not aligned to page boundaries
     # must resolve together with every other chunk sharing that page.
     counts = [0, 0, 0]
     sizes = [100, 50, PAGE * 2]  # chunk2 starts at 150, mid-page.

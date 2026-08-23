@@ -11,7 +11,7 @@
 #include "faultcache/faultcache.h"
 #include "faultcache/faultcache-client.h"
 #include "faultcache/faultcache-server.h"
-#include "test-util.h"
+#include "util.h"
 
 #include <pthread.h>
 #include <stdint.h>

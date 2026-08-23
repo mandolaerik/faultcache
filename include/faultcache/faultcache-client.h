@@ -74,7 +74,7 @@ void fc_client_pool_destroy(fc_client_pool_t *pool);
 
 /* Opaque handle to a region created by fc_client_region_create(), tracked
  * by its owning pool in an intrusive doubly-linked list (see
- * src/faultcache.c) so fc_client_region_destroy() is O(1). Not a
+ * src/client.c) so fc_client_region_destroy() is O(1). Not a
  * pointer to the region's own memory -- use fc_client_region_base() for
  * that. */
 typedef struct fc_client_region fc_client_region_t;

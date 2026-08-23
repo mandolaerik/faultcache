@@ -1,11 +1,11 @@
 # © 2026 Erik Carstensen
 # SPDX-License-Identifier: MPL-2.0
 
-test_names = ['test-basic', 'test-multi-chunk', 'test-boundary',
-              'test-readonly', 'test-unmap', 'test-lru', 'test-client-server',
-              'test-client-server-shared', 'test-client-server-destroy',
-              'test-client-server-reject', 'test-client-server-boundary',
-              'test-client-server-shared-boundary', 'test-misuse']
+test_names = ['basic', 'multi-chunk', 'boundary',
+              'readonly', 'unmap', 'lru', 'client-server',
+              'client-server-shared', 'client-server-destroy',
+              'client-server-reject', 'client-server-boundary',
+              'client-server-shared-boundary', 'misuse']
 
 foreach t : test_names
   exe = executable(t, t + '.c',

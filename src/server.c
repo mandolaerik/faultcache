@@ -5,8 +5,8 @@
 
 #define _GNU_SOURCE
 #include "faultcache/faultcache-server.h"
-#include "faultcache-internal.h"
-#include "faultcache-wire.h"
+#include "internal.h"
+#include "wire.h"
 
 #include <errno.h>
 #include <linux/userfaultfd.h>
@@ -88,7 +88,7 @@ static uint32_t find_chunk(const struct fc_server_region *r, size_t off) {
     return lo;
 }
 
-/* Mirrors resolve_fault_locked() in faultcache-sigsegv.c -- see the comment
+/* Mirrors resolve_fault_locked() in sigsegv.c -- see the comment
  * there for why pages that straddle chunk boundaries are resolved as a
  * group. Unlike that one, the resolved content is cached in `r->content`
  * rather than a throwaway buffer, since other mappings of the same region
@@ -510,7 +510,7 @@ int fc_server_run(fc_server_t *server, int conn_fd) {
     }
 
     /* Each fc_client_region_create() call is a strict resolve-then-attach
-     * ping-pong on this connection (see faultcache-wire.h); this tracks
+     * ping-pong on this connection (see wire.h); this tracks
      * which message conn_fd's next readability event should be parsed
      * as. */
     enum { CONN_WAIT_RESOLVE, CONN_WAIT_ATTACH } conn_state = CONN_WAIT_RESOLVE;

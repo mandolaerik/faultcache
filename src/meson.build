@@ -3,15 +3,15 @@
 
 lib_c_args = []
 if get_option('b_coverage')
-  # Lets faultcache-internal.h call __gcov_dump() to flush counters right
+  # Lets internal.h call __gcov_dump() to flush counters right
   # before a signal-terminated death (gcov otherwise only writes .gcda at
   # normal exit) -- see fc_flush_coverage_before_death(). Compiled out
   # entirely otherwise, so non-coverage builds never reference libgcov.
   lib_c_args += ['-DFC_COVERAGE_BUILD']
 endif
 
-faultcache_lib = library('faultcache', 'faultcache.c', 'faultcache-server.c',
-  'faultcache-sigsegv.c', 'faultcache-misuse.c',
+faultcache_lib = library('faultcache', 'client.c', 'server.c',
+  'sigsegv.c', 'misuse.c',
   include_directories: inc,
   dependencies: [thread_dep],
   c_args: lib_c_args,

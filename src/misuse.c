@@ -2,7 +2,7 @@
  * © 2026 Erik Carstensen
  * SPDX-License-Identifier: MPL-2.0
  */
-#include "faultcache-internal.h"
+#include "internal.h"
 #include "faultcache/faultcache-debug.h"
 
 #include <stdio.h>

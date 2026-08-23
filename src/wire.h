@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: MPL-2.0
  *
  * Wire format shared between fc_client_region_create()'s client half (in
- * faultcache.c) and the server's accept loop (in faultcache-server.c).
+ * client.c) and the server's accept loop (in server.c).
  * Internal to this repo's build only -- not installed, not part of the
  * public API.
  *

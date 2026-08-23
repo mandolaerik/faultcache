@@ -6,7 +6,7 @@
  * It exists for one reason: fill_chunk runs inside a SIGSEGV handler, and a
  * cyclic GC pass triggered there can finalize an unrelated object that
  * touches unresolved region memory, faulting again -- fatal by design (see
- * src/faultcache-sigsegv.c). A ctypes callback cannot prevent that, because
+ * src/sigsegv.c). A ctypes callback cannot prevent that, because
  * its trampoline allocates the argument tuple and the buffer wrapper before
  * any Python statement of ours could run. Here PyGC_Disable() is the first
  * thing that happens after acquiring the GIL.

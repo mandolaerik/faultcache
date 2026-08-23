@@ -349,7 +349,7 @@ class Region:
         matching mmap's convention), this shares the region's own memory
         directly via ctypes.from_address() - no copy is made, so it's
         cheap for large ranges. With the mprotect+SIGSEGV backend (see
-        src/faultcache-sigsegv.c), any access to the returned view -
+        src/sigsegv.c), any access to the returned view -
         including from unrelated C code such as numpy - resolves
         unresolved chunks lazily and safely on whichever thread touches
         them, same as __getitem__. There is no separate "populate first"

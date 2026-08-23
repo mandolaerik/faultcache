@@ -26,7 +26,7 @@ import zlib
 MAGIC = b"FCFX"
 
 # Deliberately not page-aligned/multiple-of-anything sizes, to exercise the
-# same page-boundary-sharing logic as tests/test-boundary.c.
+# same page-boundary-sharing logic as test/boundary.c.
 CHUNK_SIZES = [100, 4000, 4096, 9000, 42, 8192, 777]
 
 
