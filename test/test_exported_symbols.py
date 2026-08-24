@@ -9,11 +9,9 @@ internal escaped -- most likely a new source file whose helpers are not
 static, or a declaration that picked up the marker by accident. A
 missing name is an ABI break. Both are fine to do on purpose, and doing
 them on purpose means editing EXPORTED below.
-
-    test_exported_symbols.py NM LIBRARY
 """
+import os
 import subprocess
-import sys
 
 EXPORTED = {
     "fc_init",
@@ -42,35 +40,13 @@ EXPORTED = {
 }
 
 
-def main():
-    if len(sys.argv) != 3:
-        return __doc__.strip().splitlines()[-1].strip()
-    nm, library = sys.argv[1], sys.argv[2]
-
-    result = subprocess.run(
-        [nm, "--dynamic", "--defined-only", "--format=posix", library],
-        capture_output=True, text=True)
-    if result.returncode != 0:
-        return f"{nm} failed on {library}: {result.stderr.strip()}"
-
+def test_only_the_public_api_is_exported():
+    library = os.environ["FAULTCACHE_LIBRARY"]
     # posix format is "name type value size", one symbol per line.
-    found = {line.split()[0]
-             for line in result.stdout.splitlines() if line.strip()}
+    out = subprocess.run(
+        [os.environ.get("NM", "nm"), "--dynamic", "--defined-only",
+         "--format=posix", library],
+        capture_output=True, text=True, check=True).stdout
 
-    leaked = sorted(found - EXPORTED)
-    missing = sorted(EXPORTED - found)
-    for name in leaked:
-        print(f"unexpected: {name}")
-    for name in missing:
-        print(f"missing:    {name}")
-    if leaked or missing:
-        return (f"{len(leaked)} unexpected and {len(missing)} missing "
-                "symbol(s) -- fix the code, or edit EXPORTED if the change "
-                "was intended")
-
-    print(f"ok: {len(found)} exported symbols, exactly as listed")
-    return None
-
-
-if __name__ == "__main__":
-    sys.exit(main())
+    found = {line.split()[0] for line in out.splitlines() if line.strip()}
+    assert found == EXPORTED
