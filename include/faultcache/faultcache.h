@@ -40,6 +40,24 @@
 #define FC_NOTNULL(...)
 #endif
 
+/*
+ * Marks the public API. Everything else the library contains is hidden,
+ * so internal helpers with deliberately short names (src/vm.h) cannot
+ * collide with a consumer's symbols. FC_BUILDING_LIB is set only while
+ * compiling the library itself -- see src/meson.build.
+ */
+#if defined(_WIN32) || defined(__CYGWIN__)
+#ifdef FC_BUILDING_LIB
+#define FC_API __declspec(dllexport)
+#else
+#define FC_API __declspec(dllimport)
+#endif
+#elif defined(__GNUC__) || defined(__clang__)
+#define FC_API __attribute__((visibility("default")))
+#else
+#define FC_API
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -87,7 +105,7 @@ extern "C" {
  * flight. With no live regions it costs nothing anyway -- every fault just
  * falls through to the same chain it would have hit otherwise.
  */
-void fc_init(void);
+FC_API void fc_init(void);
 
 /*
  * Re-installs faultcache's handler on top of whatever holds SIGSEGV now and
@@ -126,7 +144,7 @@ void fc_init(void);
  * the chain at the default disposition, so the result is an ordinary crash
  * rather than a bounce until the stack runs out.
  */
-void fc_rearm_handler(void);
+FC_API void fc_rearm_handler(void);
 
 /*
  * Tracks the regions carved out of it (see fc_client_pool_t in
@@ -151,10 +169,10 @@ typedef struct fc_pool fc_pool_t;
  *
  * Returns nullptr on failure (errno is set).
  */
-fc_pool_t *fc_pool_create(size_t target_size);
+FC_API fc_pool_t *fc_pool_create(size_t target_size);
 
 /* Destroys the pool, tearing down any regions still alive within it. */
-void fc_pool_destroy(fc_pool_t *pool);
+FC_API void fc_pool_destroy(fc_pool_t *pool);
 
 /*
  * Called once per chunk, the first time any byte of that chunk is
@@ -199,7 +217,7 @@ typedef struct fc_region fc_region_t;
  *
  * The returned handle must be released with fc_region_destroy().
  */
-fc_region_t *fc_region_create(fc_pool_t *pool,
+FC_API fc_region_t *fc_region_create(fc_pool_t *pool,
                                uint32_t nchunks,
                                const size_t *chunk_sizes,
                                fc_fill_chunk_fn_t fill_chunk,
@@ -214,19 +232,19 @@ fc_region_t *fc_region_create(fc_pool_t *pool,
  * already-destroyed handle) is a caller bug, not a recoverable error,
  * and aborts the process.
  */
-void fc_region_destroy(fc_region_t *region) FC_NOTNULL(1);
+FC_API void fc_region_destroy(fc_region_t *region) FC_NOTNULL(1);
 
 /* Total size in bytes of a mapping previously returned by
  * fc_region_create(). `region` must be a valid, live handle (see
  * fc_region_destroy()). */
-size_t fc_region_size(const fc_region_t *region) FC_NOTNULL(1);
+FC_API size_t fc_region_size(const fc_region_t *region) FC_NOTNULL(1);
 
 /* The region's mapped base address (of total size fc_region_size()
  * bytes) -- may be dereferenced/read directly; writes fault fatally.
  * Valid for as long as `region` itself is (i.e. until
  * fc_region_destroy()). `region` must be a valid, live handle. Never
  * fails. */
-const void *fc_region_base(const fc_region_t *region) FC_NOTNULL(1);
+FC_API const void *fc_region_base(const fc_region_t *region) FC_NOTNULL(1);
 
 #ifdef __cplusplus
 }

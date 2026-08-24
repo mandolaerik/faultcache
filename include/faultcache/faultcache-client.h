@@ -67,10 +67,10 @@ typedef struct fc_client_pool fc_client_pool_t;
  * Currently aborts the process on allocation failure (rather than returning
  * nullptr).
  */
-fc_client_pool_t *fc_client_pool_create(size_t target_size);
+FC_API fc_client_pool_t *fc_client_pool_create(size_t target_size);
 
 /* Destroys the pool, tearing down any regions still alive within it. */
-void fc_client_pool_destroy(fc_client_pool_t *pool);
+FC_API void fc_client_pool_destroy(fc_client_pool_t *pool);
 
 /* Opaque handle to a region created by fc_client_region_create(), tracked
  * by its owning pool in an intrusive doubly-linked list (see
@@ -105,7 +105,7 @@ typedef struct fc_client_region fc_client_region_t;
  * fc_client_region_destroy(). Use fc_client_region_base() to get the
  * mapping's base address.
  */
-fc_client_region_t *fc_client_region_create(fc_client_pool_t *pool,
+FC_API fc_client_region_t *fc_client_region_create(fc_client_pool_t *pool,
                                              int server_fd,
                                              size_t descriptor_size,
                                              const void *descriptor,
@@ -121,20 +121,20 @@ fc_client_region_t *fc_client_region_create(fc_client_pool_t *pool,
  * already-destroyed handle) is a caller bug, not a recoverable error,
  * and aborts the process.
  */
-void fc_client_region_destroy(fc_client_region_t *region) FC_NOTNULL(1);
+FC_API void fc_client_region_destroy(fc_client_region_t *region) FC_NOTNULL(1);
 
 /* The region's mapped base address (of total size
  * fc_client_region_size() bytes) -- may be dereferenced/read directly;
  * writes fault fatally. Valid for as long as `region` itself is (i.e.
  * until fc_client_region_destroy()). `region` must be a valid, live
  * handle -- passing nullptr is caller misuse and aborts the process. */
-const void *fc_client_region_base(const fc_client_region_t *region)
+FC_API const void *fc_client_region_base(const fc_client_region_t *region)
     FC_NOTNULL(1);
 
 /* Total size in bytes of a mapping previously returned by
  * fc_client_region_create(). `region` must be a valid, live handle --
  * passing nullptr is caller misuse and aborts the process. */
-size_t fc_client_region_size(const fc_client_region_t *region) FC_NOTNULL(1);
+FC_API size_t fc_client_region_size(const fc_client_region_t *region) FC_NOTNULL(1);
 
 #ifdef __cplusplus
 }

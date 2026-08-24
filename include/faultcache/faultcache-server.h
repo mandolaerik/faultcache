@@ -85,7 +85,7 @@ typedef struct fc_server fc_server_t;
  * The caller retains ownership of the factory pointer and must not free it
  * until after fc_server_destroy() returns.
  */
-fc_server_t *fc_server_create(fc_region_factory_fn_t factory,
+FC_API fc_server_t *fc_server_create(fc_region_factory_fn_t factory,
                               void *factory_user_data,
                               size_t target_size) FC_NOTNULL(1);
 
@@ -109,18 +109,18 @@ fc_server_t *fc_server_create(fc_region_factory_fn_t factory,
  * the same fc_server_t are safe (needed for descriptor-based sharing
  * across connections) and share the same regions/factory.
  */
-int fc_server_run(fc_server_t *server, int conn_fd) FC_NOTNULL(1);
+FC_API int fc_server_run(fc_server_t *server, int conn_fd) FC_NOTNULL(1);
 
 /* Asks a concurrently-running fc_server_run() to return.
  * `server` must be non-nullptr -- passing nullptr is caller misuse and
  * aborts the process. */
-void fc_server_stop(fc_server_t *server) FC_NOTNULL(1);
+FC_API void fc_server_stop(fc_server_t *server) FC_NOTNULL(1);
 
 /* Tears down the server and every region it was servicing, calling each
  * region's destroy_user_data (if any -- see fc_region_factory_fn_t).
  * Must not be called while fc_server_run() is still running on another
  * thread. */
-void fc_server_destroy(fc_server_t *server);
+FC_API void fc_server_destroy(fc_server_t *server);
 
 #ifdef __cplusplus
 }

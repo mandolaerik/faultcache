@@ -52,11 +52,11 @@ struct fc_region_debug_lru_stats {
  * `region` and `out` must be non-nullptr -- violating that is a caller
  * bug, not a recoverable error, and aborts the process.
  */
-void fc_region_debug_stats(const fc_region_t *region,
+FC_API void fc_region_debug_stats(const fc_region_t *region,
                            struct fc_region_debug_stats *out);
 
 /* Fills *out with a snapshot of region-local LRU counters. */
-void fc_region_debug_lru_stats(const fc_region_t *region,
+FC_API void fc_region_debug_lru_stats(const fc_region_t *region,
                                struct fc_region_debug_lru_stats *out);
 
 /*
@@ -67,7 +67,7 @@ void fc_region_debug_lru_stats(const fc_region_t *region,
  *
  * `pool`, `out_entries`, and `out_count` must be non-nullptr.
  */
-void fc_pool_debug_lru_queue(const fc_pool_t *pool,
+FC_API void fc_pool_debug_lru_queue(const fc_pool_t *pool,
                              struct fc_pool_debug_lru_entry *out_entries,
                              uint32_t max_entries,
                              uint32_t *out_count);
@@ -76,7 +76,7 @@ void fc_pool_debug_lru_queue(const fc_pool_t *pool,
  * Copies the per-chunk persistent fault-history table into `out_entries`.
  * `out_entries` must have exactly region->nchunks entries.
  */
-void fc_region_debug_lru_history(const fc_region_t *region,
+FC_API void fc_region_debug_lru_history(const fc_region_t *region,
                                  struct fc_region_debug_lru_entry *out_entries);
 
 /*
@@ -97,7 +97,7 @@ void fc_region_debug_lru_history(const fc_region_t *region,
  * process-wide slot) -- for single-threaded test use only.
  */
 typedef void (*fc_misuse_hook_t)(const char *what);
-void fc_debug_set_misuse_hook(fc_misuse_hook_t hook);
+FC_API void fc_debug_set_misuse_hook(fc_misuse_hook_t hook);
 
 #ifdef __cplusplus
 }

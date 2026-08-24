@@ -13,6 +13,14 @@ foreach t : test_names
   test(t, exe, timeout: 30)
 endforeach
 
+# nm ships with the binutils that provide the assembler and linker, so a
+# build that got this far has it.
+test('test_exported_symbols', find_program('python3'),
+  args: [files('test_exported_symbols.py'), find_program('nm').full_path(),
+         faultcache_lib.full_path()],
+  depends: faultcache_lib,
+  timeout: 30)
+
 # ctypes-loading a sanitizer-instrumented libfaultcache.so into the plain
 # (non-instrumented) python3 interpreter via dlopen doesn't work without
 # LD_PRELOAD-ing libasan first, so this test is skipped under b_sanitize.
