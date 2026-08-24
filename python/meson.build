@@ -9,7 +9,10 @@ shim_build_dir = meson.current_build_dir()
 
 if py.found()
   py_dep = py.dependency(required: false)
-  if py_dep.found()
+  # py.dependency() is derived from sysconfig and reports found even when
+  # only the interpreter is installed, so ask for the header itself.
+  if py_dep.found() and meson.get_compiler('c').has_header('Python.h',
+      dependencies: py_dep)
     # abi3 at 3.10: everything the shim uses is in the stable ABI at that
     # level, so one binary covers every supported interpreter.
     faultcache_shim = py.extension_module('_faultcache',

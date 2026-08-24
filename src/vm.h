@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: MPL-2.0
  *
  * The virtual-memory seam: every page-level kernel call the inline
- * backend (sigsegv.c) makes goes through here, so that a port is a new
+ * backend (inproc.c) makes goes through here, so that a port is a new
  * vm-<platform>.c rather than #ifdefs scattered through the fault
  * logic. Failures abort -- surviving them would need fault injection to
  * test, and the callers have nowhere to put an error anyway, since most

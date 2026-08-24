@@ -88,7 +88,7 @@ static uint32_t find_chunk(const struct fc_server_region *r, size_t off) {
     return lo;
 }
 
-/* Mirrors resolve_fault_locked() in sigsegv.c -- see the comment
+/* Mirrors resolve_fault_locked() in inproc.c -- see the comment
  * there for why pages that straddle chunk boundaries are resolved as a
  * group. Unlike that one, the resolved content is cached in `r->content`
  * rather than a throwaway buffer, since other mappings of the same region

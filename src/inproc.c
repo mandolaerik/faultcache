@@ -3,21 +3,22 @@
  * SPDX-License-Identifier: MPL-2.0
  *
  * fc_pool_t: in-process, inline self-service fault handling. Each
- * not-yet-resolved chunk range starts out mmap(PROT_NONE); touching it
- * raises SIGSEGV, caught by a process-wide handler installed on first
- * use, which resolves the fault SYNCHRONOUSLY on the very thread that
- * touched it (no separate handler thread, no userfaultfd -- contrast
- * with the client/server backend in client.c, which delegates to a
- * separate server process over uffd).
+ * not-yet-resolved chunk range starts out reserved unreadable; touching
+ * it raises a fault that is resolved SYNCHRONOUSLY on the very thread
+ * that touched it (no separate handler thread, no userfaultfd --
+ * contrast with the client/server backend in client.c, which delegates
+ * to a separate server process over uffd). How the OS delivers that
+ * fault, and how the reservation is made, are the platform's business:
+ * see fault.h and vm.h. Nothing below this comment mentions either.
  *
  * Resolving a chunk populates a private scratch mapping first, then
- * atomically installs it over the target range via
- * mremap(MREMAP_MAYMOVE|MREMAP_FIXED) -- never mprotect(PROT_READ|WRITE)
- * then memmove() in place. The in-place approach is racy: mprotect takes
- * effect process-wide instantly, so another thread can observe the page
- * as readable-but-not-yet-written in the gap before the content is
- * actually copied in (empirically confirmed during design -- see repo
- * memory / .github/copilot-notes/faultcache-zerocopy-design.md).
+ * atomically installs it over the target range -- never making the
+ * range writable and copying into it in place. The in-place approach is
+ * racy: the permission change takes effect process-wide instantly, so
+ * another thread can observe the page as readable-but-not-yet-written
+ * in the gap before the content is actually copied in (empirically
+ * confirmed during design -- see repo memory /
+ * .github/copilot-notes/faultcache-zerocopy-design.md).
  *
  * Chunk boundaries need not be page-aligned, so a page can hold bytes
  * from several chunks and cannot be installed until all of them have
@@ -35,12 +36,12 @@
  */
 #include "faultcache/faultcache.h"
 #include "faultcache/faultcache-debug.h"
+#include "fault.h"
 #include "internal.h"
 #include "vm.h"
 
 #include <errno.h>
 #include <pthread.h>
-#include <signal.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -162,24 +163,16 @@ static void region_list_remove(fc_region_t *r) {
 }
 
 /*
- * Process-wide registry of live pools, so the one process-wide SIGSEGV
+ * Process-wide registry of live pools, so the one process-wide fault
  * handler can find which region (if any, across every fc_pool_t) a
  * given faulting address belongs to.
  */
 static pthread_mutex_t g_pools_lock = PTHREAD_MUTEX_INITIALIZER;
 static fc_pool_t *g_pools = nullptr;
 
-static pthread_once_t g_handler_once = PTHREAD_ONCE_INIT;
-static struct sigaction g_old_action;
-/* Read without the once-guard, so it must be set inside install_handler(),
- * which pthread_once() publishes to other threads for us. */
-static bool g_handler_installed = false;
-/* True while this thread is passing a fault down g_old_action. */
-static __thread bool g_chaining = false;
-
 /*
  * True for the duration of resolve_fault_locked() on this thread (set
- * around the call in segv_handler(), below). Lets segv_handler() detect
+ * around the call in fault_try_resolve(), below). Lets us detect
  * fill_chunk() touching a not-yet-resolved page of its own or another
  * region while already running -- the resolve in progress holds
  * pool->lock (and g_pools_lock), both plain non-recursive mutexes, so
@@ -589,7 +582,7 @@ static void resolve_fault_locked(fc_region_t *r, size_t fault_off) {
 }
 
 /*
- * Still a linear scan: the SIGSEGV handler only has a faulting address,
+ * Still a linear scan: the fault handler only has a faulting address,
  * not a region handle, so there's no way to avoid searching every
  * region of every pool here regardless of the list's O(1)-removal
  * shape (an interval tree would help if this ever shows up as hot;
@@ -606,9 +599,8 @@ static fc_region_t *find_region_locked(fc_pool_t *pool,
     return nullptr;
 }
 
-static void segv_handler(int sig, siginfo_t *info, void *ucontext) {
-    int saved_errno = errno;
-    uintptr_t addr = (uintptr_t)info->si_addr;
+bool fault_try_resolve(void *fault_addr) {
+    uintptr_t addr = (uintptr_t)fault_addr;
 
     if (g_resolving_fault) {
         /* A fault occurred while already resolving another fault on this
@@ -617,23 +609,21 @@ static void segv_handler(int sig, siginfo_t *info, void *ucontext) {
          * outright. Either way, retrying the normal path here would
          * recurse into locks resolve_fault_locked already holds (plain,
          * non-recursive mutexes) instead of making progress, so treat it
-         * as the caller bug it is rather than deadlocking. errno is
-         * restored first since fc_misuse()'s default path calls
-         * fprintf().
+         * as the caller bug it is rather than deadlocking.
          *
          * Tested via test_nested_fault_across_regions_is_fatal
          * (test/misuse.c), which forks and triggers this for real; the
          * child terminates via fc_misuse()'s abort(), which flushes
          * coverage counters itself before dying (see
          * fc_flush_coverage_before_death()). */
-        errno = saved_errno;
         fc_misuse("fault raised while fill_chunk() was still resolving "
                   "another fault -- nested/recursive faults are not "
                   "supported");
-        return; /* GCOVR_EXCL_LINE: only reached if a misuse hook survives
-                 * fc_misuse() instead of the default abort() -- no test
-                 * installs a surviving hook for this call site (would
-                 * mean longjmp'ing out of a signal handler). */
+        return true; /* GCOVR_EXCL_LINE: only reached if a misuse hook
+                      * survives fc_misuse() instead of the default
+                      * abort() -- no test installs a surviving hook for
+                      * this call site (would mean longjmp'ing out of a
+                      * signal handler). */
     }
 
     pthread_mutex_lock(&g_pools_lock);
@@ -645,92 +635,32 @@ static void segv_handler(int sig, siginfo_t *info, void *ucontext) {
             /* An address inside a known region whose page is already
              * readable is not a "chunk not populated yet" fault -- it's
              * a genuine violation (almost always a write to the now
-             * read-only chunk). Don't swallow it: fall through to the
-             * crash path below, same as an address outside any region. */
+             * read-only chunk). Don't swallow it: report it as not ours
+             * so it reaches the crash path, same as an address outside
+             * any region. */
             if (!page_readable(r, fault_off)) {
                 g_resolving_fault = true;
                 resolve_fault_locked(r, fault_off);
                 g_resolving_fault = false;
                 pthread_mutex_unlock(&pool->lock);
                 pthread_mutex_unlock(&g_pools_lock);
-                errno = saved_errno;
-                return; /* retry the faulting instruction */
+                return true;
             }
         }
         pthread_mutex_unlock(&pool->lock);
     }
     pthread_mutex_unlock(&g_pools_lock);
-    errno = saved_errno;
-
-    /* Not one of ours -- chain to whatever was installed before us, but
-     * do NOT uninstall ourselves to do it. That handler may resolve its
-     * own fault and return (another lazy-mapping library, a JIT, a GC
-     * write barrier), in which case the retried instruction succeeds and
-     * execution continues -- and it has to continue with our regions
-     * still working. Restoring is only right for a default/ignore
-     * disposition, where there is nothing to call and returning is
-     * precisely what lets the kernel act on it.
-     *
-     * Flush coverage last, after the chain attempt: from here the process
-     * either dies inside the old handler, or returns and the kernel
-     * retries the faulting instruction -- either way this is the last
-     * chance to flush counters for the lines below (a dump placed before
-     * them would miss their counters, since gcov only credits a line once
-     * its block is actually entered).
-     *
-     * g_chaining breaks a cycle: after fc_rearm_handler(), a library that
-     * had saved us and chains back can route the same fault into us a
-     * second time, and following g_old_action again would bounce it
-     * between the two until the stack ran out. Reaching here twice for one
-     * fault means the chain loops, so end it at the default disposition
-     * instead -- a crash, which is what an unhandled fault should be. */
-    if (g_chaining) {
-        signal(sig, SIG_DFL);
-    } else {
-        g_chaining = true;
-        if (g_old_action.sa_flags & SA_SIGINFO)
-            g_old_action.sa_sigaction(sig, info, ucontext);
-        else if (g_old_action.sa_handler != SIG_DFL
-                 && g_old_action.sa_handler != SIG_IGN)
-            g_old_action.sa_handler(sig);
-        else
-            sigaction(sig, &g_old_action, nullptr);
-        g_chaining = false;
-    }
-    fc_flush_coverage_before_death();
-}
-
-static void install_handler(void) {
-    struct sigaction sa = {0};
-    sa.sa_sigaction = segv_handler;
-    /* SA_NODEFER: without it, SIGSEGV is auto-blocked for this thread
-     * for the handler's duration, and a synchronous fault (e.g.
-     * fill_chunk touching another unresolved page) raised while it's
-     * blocked can't be delivered to us at all -- the kernel forces the
-     * signal's default disposition instead, killing the process with a
-     * raw, undiagnosed SIGSEGV. With it, such a fault re-enters this
-     * handler, where g_resolving_fault turns it into a clear
-     * fc_misuse() diagnostic instead. */
-    sa.sa_flags = SA_SIGINFO | SA_NODEFER;
-    sigemptyset(&sa.sa_mask);
-    struct sigaction prev;
-    sigaction(SIGSEGV, &sa, &prev);
-    /* On a re-arm we may already be the installed handler; keeping our
-     * own action as the chain target would make the tail call itself. */
-    if (!((prev.sa_flags & SA_SIGINFO) && prev.sa_sigaction == segv_handler))
-        g_old_action = prev;
-    g_handler_installed = true;
+    return false;
 }
 
 /* See fc_init()'s comment in faultcache.h for why the install point is an
  * explicit call rather than a lazy one at first use. */
 void fc_init(void) {
-    pthread_once(&g_handler_once, install_handler);
+    fault_arm();
 }
 
 void fc_rearm_handler(void) {
-    fc_init();
-    install_handler();
+    fault_rearm();
 }
 
 fc_pool_t *fc_pool_create(size_t target_size) {
@@ -795,7 +725,7 @@ fc_region_t *fc_region_create(fc_pool_t *pool, uint32_t nchunks,
                                fc_fill_chunk_fn_t fill_chunk, const void *user_data) {
     if (!pool || nchunks == 0 || !chunk_sizes || !fill_chunk)
         fc_misuse("fc_region_create: invalid arguments");
-    if (!g_handler_installed)
+    if (!fault_armed())
         fc_misuse("fc_region_create: fc_init() has not been called -- call it "
                   "from your library's init, before any region exists");
 
