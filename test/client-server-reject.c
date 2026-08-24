@@ -7,8 +7,8 @@
  * the client, malloc'd and owned by the caller.
  */
 #include "faultcache/faultcache.h"
-#include "faultcache/faultcache-client.h"
-#include "faultcache/faultcache-server.h"
+#include "faultcache/client.h"
+#include "faultcache/server.h"
 #include "util.h"
 
 #include <errno.h>

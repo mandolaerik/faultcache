@@ -18,7 +18,7 @@
  * are actually read.
  *
  * This header covers the in-process API: chunk content is derived
- * in-process by fill_chunk(). See faultcache-client.h/faultcache-server.h
+ * in-process by fill_chunk(). See client.h/server.h
  * for the split client/server variant, where content is derived by a
  * separate server process.
  *
@@ -153,7 +153,7 @@ FC_API void fc_rearm_handler(void);
 
 /*
  * Tracks the regions carved out of it (see fc_client_pool_t in
- * faultcache-client.h for the split client/server equivalent), and owns
+ * client.h for the split client/server equivalent), and owns
  * a shared, size-bounded cache of resident chunks across all of them,
  * with LRU eviction.
  */

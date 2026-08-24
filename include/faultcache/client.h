@@ -4,7 +4,7 @@
  *
  * faultcache client/server resolution, client side: a pool whose
  * accesses fault locally, but whose chunk content is supplied by a
- * separate server process (see faultcache-server.h), reached over an
+ * separate server process (see server.h), reached over an
  * already-connected AF_UNIX SOCK_SEQPACKET socket. Same-machine IPC, not
  * networked -- "client/server" describes the fault/derive role split,
  * not a network protocol.
@@ -98,7 +98,7 @@ typedef struct fc_client_region fc_client_region_t;
  * If `out_error` is non-nullptr, *out_error is always set: nullptr if the call
  * succeeded or no message was available, otherwise a malloc()'d,
  * human-readable string (relayed from the factory's rejection message,
- * see fc_region_factory_fn_t in faultcache-server.h) that the caller
+ * see fc_region_factory_fn_t in server.h) that the caller
  * must free(). Pass nullptr if uninterested.
  *
  * Returns an opaque handle on success, which must be released with

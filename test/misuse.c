@@ -9,8 +9,8 @@
  * pool destroy-ordering) that don't need any of that machinery.
  */
 #include "faultcache/faultcache.h"
-#include "faultcache/faultcache-client.h"
-#include "faultcache/faultcache-debug.h"
+#include "faultcache/client.h"
+#include "faultcache/debug.h"
 #include "util.h"
 
 #include <errno.h>

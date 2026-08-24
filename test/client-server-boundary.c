@@ -7,8 +7,8 @@
  * including tiny chunks in the middle of a page.
  */
 #include "faultcache/faultcache.h"
-#include "faultcache/faultcache-client.h"
-#include "faultcache/faultcache-server.h"
+#include "faultcache/client.h"
+#include "faultcache/server.h"
 #include "test-common.h"
 #include "util.h"
 

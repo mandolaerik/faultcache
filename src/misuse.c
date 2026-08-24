@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: MPL-2.0
  */
 #include "internal.h"
-#include "faultcache/faultcache-debug.h"
+#include "faultcache/debug.h"
 
 #include <stdio.h>
 #include <stdlib.h>

@@ -44,7 +44,7 @@ __all__ = ["Pool", "Region", "rearm_handler"]
 class _DebugStats(NamedTuple):
     """Snapshot of a region's fault-handling activity.
 
-    Mirrors struct fc_region_debug_stats from faultcache-debug.h - a
+    Mirrors struct fc_region_debug_stats from debug.h - a
     debug/test-only API, not part of the stable ABI.
     """
     nchunks: int
@@ -304,7 +304,7 @@ class Region:
     def _debug_stats(self) -> _DebugStats:
         """Snapshot of resolved-chunk/fault counters straight from the C
         library, without touching any region memory. Debug/test-only, see
-        faultcache-debug.h."""
+        debug.h."""
         if self._addr is None:
             raise ValueError("Region is closed")
         stats = _CDebugStats()

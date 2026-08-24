@@ -35,7 +35,7 @@
  * the cold half pays for this, and only once per demotion.
  */
 #include "faultcache/faultcache.h"
-#include "faultcache/faultcache-debug.h"
+#include "faultcache/debug.h"
 #include "fault.h"
 #include "internal.h"
 #include "vm.h"
@@ -118,7 +118,7 @@ struct fc_region {
     fc_fill_chunk_fn_t fill_chunk;
     const void *user_data;
 
-    /* Debug-only introspection (see faultcache-debug.h), guarded by the
+    /* Debug-only introspection (see debug.h), guarded by the
      * owning pool's lock, same as initialized[]. */
     uint32_t chunks_resolved;
     uint32_t faults_handled;

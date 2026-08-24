@@ -82,7 +82,7 @@ FC_API void fc_region_debug_lru_history(const fc_region_t *region,
 /*
  * Overrides what happens when the library detects a caller bug (nullptr/
  * invalid handle, bad arguments -- see e.g. fc_region_destroy()) across
- * BOTH faultcache.h and faultcache-client.h. By default (hook == nullptr)
+ * BOTH faultcache.h and client.h. By default (hook == nullptr)
  * this prints a diagnostic to stderr and abort()s the process; tests
  * can install a hook to observe/verify a specific misuse case without
  * killing the test binary.

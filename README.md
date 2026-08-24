@@ -66,7 +66,7 @@ worked examples for both.
   running inline in the same process — no IPC, no extra process.
 - **Client/server backend** (Linux-only, **experimental**): a pool whose
   faults are resolved by a separate server process over `userfaultfd(2)`
-  + `SCM_RIGHTS` (see `faultcache-client.h`/`faultcache-server.h`).
+  + `SCM_RIGHTS` (see `client.h`/`server.h`).
   Content derivation is keyed by a caller-defined opaque descriptor, so
   multiple client processes handing off the same descriptor share one
   underlying resolved region instead of re-deriving it independently.
@@ -121,8 +121,8 @@ meson test -C build-py3.12
 ```
 
 `meson install` installs the shared library, pkg-config file, and the
-public headers (`faultcache.h`, `faultcache-client.h`,
-`faultcache-server.h`).
+public headers (`faultcache.h`, `client.h`,
+`server.h`).
 
 ## Using it from C
 
@@ -225,7 +225,7 @@ contract `fill_chunk` must honor (it runs inside a signal handler) and
     reliable recency heuristic through `mincore()`. This would however come at
     the expense of disk space consumption, which can be a real problem on
     systems where `/tmp` has limited capacity.
-- **Debug/introspection API is unstable.** `faultcache-debug.h` is
+- **Debug/introspection API is unstable.** `debug.h` is
   build-tree-only (not installed), exists for tests, and its shape may
   change without notice.
 

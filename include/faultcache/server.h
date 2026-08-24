@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: MPL-2.0
  *
  * faultcache client/server resolution, server side: derives chunk
- * content for one or more clients (see faultcache-client.h for the
+ * content for one or more clients (see client.h for the
  * client side and the full protocol/sharing description), each reached
  * over an already-connected AF_UNIX SOCK_SEQPACKET socket.
  */
@@ -44,7 +44,7 @@ typedef struct {
 
 /*
  * Called the first time a descriptor is seen by a given fc_server_t (not
- * once per handoff -- see faultcache-client.h), turning that descriptor
+ * once per handoff -- see client.h), turning that descriptor
  * into an `out_layout`.
  *
  * On success, must set every field of `*out_layout` and return nullptr.

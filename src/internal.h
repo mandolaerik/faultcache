@@ -12,7 +12,7 @@
 #include <stdlib.h>
 
 /* Reports a caller bug (see fc_debug_set_misuse_hook() in
- * faultcache-debug.h for the test-hook escape hatch); by default prints
+ * debug.h for the test-hook escape hatch); by default prints
  * `what` to stderr and abort()s. Never returns unless a misbehaving
  * hook does. */
 void fc_misuse(const char *what);
