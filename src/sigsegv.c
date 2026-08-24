@@ -33,10 +33,10 @@
  * faults, hands the access back and moves the chunk to the front. Only
  * the cold half pays for this, and only once per demotion.
  */
-#define _GNU_SOURCE
 #include "faultcache/faultcache.h"
 #include "faultcache/faultcache-debug.h"
 #include "internal.h"
+#include "vm.h"
 
 #include <errno.h>
 #include <pthread.h>
@@ -46,8 +46,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/mman.h>
-#include <unistd.h>
 
 typedef struct chunk_lru {
     struct chunk_lru *next;
@@ -72,7 +70,8 @@ typedef struct {
     uint32_t first_chunk; /* contributors are the range [first, last] */
     uint32_t last_chunk;
     uint32_t staged;      /* contributors whose bytes are in `staging` */
-    void *staging;        /* one page, nullptr before first use and once mapped */
+    /* One page; .addr is nullptr before first use and once published. */
+    vm_scratch_t staging;
     bool mapped;
 } shared_page_t;
 
@@ -324,11 +323,12 @@ static size_t lru_node_size(const chunk_lru_t *node) {
 
 /* Only the chunk's exclusive pages: the ones it shares with a neighbour
  * belong to no single chunk, so no single chunk may hide them. */
-static void chunk_set_prot(const fc_region_t *r, uint32_t chunk, int prot) {
+static void chunk_set_readable(const fc_region_t *r, uint32_t chunk,
+                               bool readable) {
     size_t lo, hi;
     chunk_exclusive_pages(r, chunk, &lo, &hi);
     if (hi > lo)
-        FC_ASSERT(mprotect((char *)r->base + lo, hi - lo, prot) == 0);
+        vm_set_readable((char *)r->base + lo, hi - lo, readable);
 }
 
 static void lru_unlink(fc_pool_t *pool, chunk_lru_t *node) {
@@ -372,7 +372,7 @@ static void lru_rebalance(fc_pool_t *pool) {
     while (pool->hot_bytes > pool->resident_bytes / 2
            && pool->midpoint != pool->lru_head.next) {
         chunk_lru_t *node = pool->midpoint;
-        chunk_set_prot(node->region, node->chunk, PROT_NONE);
+        chunk_set_readable(node->region, node->chunk, false);
         node->cold = true;
         pool->hot_bytes -= lru_node_size(node);
         pool->midpoint = node->prev;
@@ -382,7 +382,7 @@ static void lru_rebalance(fc_pool_t *pool) {
 /* Hands a demoted chunk its read access back and makes it the MRU. */
 static void lru_promote(fc_pool_t *pool, chunk_lru_t *node) {
     FC_ASSERT(node->cold);
-    chunk_set_prot(node->region, node->chunk, PROT_READ);
+    chunk_set_readable(node->region, node->chunk, true);
     lru_unlink(pool, node);
     lru_insert_mru(pool, node);
 }
@@ -410,12 +410,7 @@ static void lru_evict_chunk(fc_pool_t *pool, fc_region_t *r,
     if (hi == lo)
         return;
 
-    /* mprotect(PROT_NONE) would hide the pages but leave them charged to
-     * RSS; remapping fresh anonymous PROT_NONE pages over the range also
-     * frees them, which is the whole point of evicting. */
-    FC_ASSERT(mmap((char *)r->base + lo, hi - lo, PROT_NONE,
-                   MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0)
-              != MAP_FAILED);
+    vm_decommit((char *)r->base + lo, hi - lo);
 }
 
 static void evict_until_within_budget(fc_pool_t *pool,
@@ -437,11 +432,10 @@ static void evict_until_within_budget(fc_pool_t *pool,
 }
 
 static void install_shared_page(fc_region_t *r, shared_page_t *sp) {
-    FC_ASSERT(mprotect(sp->staging, r->page_size, PROT_READ) == 0);
-    FC_ASSERT(mremap(sp->staging, r->page_size, r->page_size,
-                     MREMAP_MAYMOVE | MREMAP_FIXED,
-                     (char *)r->base + sp->page_off) != MAP_FAILED);
-    sp->staging = nullptr;
+    vm_scratch_seal(&sp->staging);
+    vm_scratch_publish(&sp->staging, 0, r->page_size,
+                       (char *)r->base + sp->page_off);
+    sp->staging.addr = nullptr;
     sp->mapped = true;
 }
 
@@ -455,19 +449,15 @@ static void stage_into_shared_page(fc_region_t *r,
                                    const void *scratch, size_t span_lo) {
     FC_ASSERT(!sp->mapped);
 
-    if (!sp->staging) {
-        sp->staging = mmap(nullptr, r->page_size, PROT_READ | PROT_WRITE,
-                           MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-        /* Same survive-it-needs-a-test rationale as the scratch mmap below. */
-        FC_ASSERT(sp->staging != MAP_FAILED);
-    }
+    if (!sp->staging.addr)
+        sp->staging = vm_scratch_create(r->page_size);
 
     size_t page_end = sp->page_off + r->page_size;
     size_t lo = r->chunk_start[c] > sp->page_off ? r->chunk_start[c]
                                                  : sp->page_off;
     size_t hi = r->chunk_start[c + 1] < page_end ? r->chunk_start[c + 1]
                                                  : page_end;
-    memcpy((char *)sp->staging + (lo - sp->page_off),
+    memcpy((char *)sp->staging.addr + (lo - sp->page_off),
            (const char *)scratch + (lo - span_lo), hi - lo);
 
     r->chunk_staged[c] = true;
@@ -490,17 +480,12 @@ static void fill_chunk_locked(fc_region_t *r, uint32_t c) {
     size_t span_hi = page_ceil(end, r->page_size);
     size_t span_len = span_hi - span_lo;
 
-    /* Fresh anonymous pages are already zero-filled by the kernel, so
-     * any tail padding past the last chunk (or bytes not covered by any
-     * chunk on a shared boundary page) reads back as 0 with no extra
-     * work. */
-    void *scratch = mmap(nullptr, span_len, PROT_READ | PROT_WRITE,
-                         MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    /* Surviving this would need a real (fault-injected) test to prove;
-     * until then, aborting is good enough. */
-    FC_ASSERT(scratch != MAP_FAILED);
+    /* Scratch comes zero-filled, so any tail padding past the last chunk
+     * (or bytes not covered by any chunk on a shared boundary page)
+     * reads back as 0 with no extra work. */
+    vm_scratch_t scratch = vm_scratch_create(span_len);
 
-    r->fill_chunk(c, (char *)scratch + (start - span_lo), end - start,
+    r->fill_chunk(c, (char *)scratch.addr + (start - span_lo), end - start,
                   r->user_data);
     r->initialized[c] = true;
 
@@ -519,33 +504,31 @@ static void fill_chunk_locked(fc_region_t *r, uint32_t c) {
     if (!r->chunk_staged[c]) {
         if (has_head)
             stage_into_shared_page(r, find_shared_page(r, span_lo), c,
-                                   scratch, span_lo);
+                                   scratch.addr, span_lo);
         if (has_tail)
             stage_into_shared_page(r, find_shared_page(r, tail_page), c,
-                                   scratch, span_lo);
+                                   scratch.addr, span_lo);
     }
 
-    /* Drop to read-only BEFORE installing at the target address (see
-     * the file-level comment) -- the region's public contract is that
-     * writes fault fatally, same as a read-only file mapping. Same
-     * survive-it-needs-a-test rationale as the mmap above. */
-    FC_ASSERT(mprotect(scratch, span_len, PROT_READ) == 0);
+    /* Seal BEFORE publishing (see the file-level comment) -- the
+     * region's public contract is that writes fault fatally, same as a
+     * read-only file mapping. */
+    vm_scratch_seal(&scratch);
 
     size_t excl_lo, excl_hi;
     chunk_exclusive_pages(r, c, &excl_lo, &excl_hi);
     if (excl_hi > excl_lo) {
-        size_t len = excl_hi - excl_lo;
-        FC_ASSERT(mremap((char *)scratch + (excl_lo - span_lo), len, len,
-                         MREMAP_MAYMOVE | MREMAP_FIXED,
-                         (char *)r->base + excl_lo) != MAP_FAILED);
-        /* mremap only moved the middle out; the shared ends are still
-         * mapped where scratch was. */
+        vm_scratch_publish(&scratch, excl_lo - span_lo, excl_hi - excl_lo,
+                           (char *)r->base + excl_lo);
+        /* Publishing only took the middle; the shared ends are still
+         * sitting in the scratch buffer. */
         if (excl_lo > span_lo)
-            munmap(scratch, excl_lo - span_lo);
+            vm_scratch_discard(&scratch, 0, excl_lo - span_lo);
         if (excl_hi < span_hi)
-            munmap((char *)scratch + (excl_hi - span_lo), span_hi - excl_hi);
+            vm_scratch_discard(&scratch, excl_hi - span_lo,
+                               span_hi - excl_hi);
     } else {
-        munmap(scratch, span_len);
+        vm_scratch_discard(&scratch, 0, span_len);
     }
 
     r->chunk_faults_total[c]++;
@@ -770,10 +753,10 @@ fc_pool_t *fc_pool_create(size_t target_size) {
 }
 
 static void region_free(fc_region_t *r) {
-    munmap(r->base, r->mapped_size);
+    vm_release(r->base, r->mapped_size);
     for (uint32_t i = 0; i < r->nshared; i++) {
-        if (r->shared_pages[i].staging)
-            munmap(r->shared_pages[i].staging, r->page_size);
+        if (r->shared_pages[i].staging.addr)
+            vm_scratch_discard(&r->shared_pages[i].staging, 0, r->page_size);
     }
     free(r->shared_pages);
     free(r->chunk_staged);
@@ -844,15 +827,12 @@ fc_region_t *fc_region_create(fc_pool_t *pool, uint32_t nchunks,
 
     r->total_size = total_size;
     r->nchunks = nchunks;
-    r->page_size = (size_t)sysconf(_SC_PAGESIZE);
+    r->page_size = vm_page_size();
     r->fill_chunk = fill_chunk;
     r->user_data = user_data;
     r->mapped_size = page_ceil(total_size, r->page_size);
 
-    r->base = mmap(nullptr, r->mapped_size, PROT_NONE,
-                   MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    /* Same survive-it-needs-a-test rationale as the calloc/malloc above. */
-    FC_ASSERT(r->base != MAP_FAILED);
+    r->base = vm_reserve(r->mapped_size);
 
     shared_pages_init(r);
     lru_init(r);

@@ -11,7 +11,7 @@ if get_option('b_coverage')
 endif
 
 faultcache_lib = library('faultcache', 'client.c', 'server.c',
-  'sigsegv.c', 'misuse.c',
+  'sigsegv.c', 'misuse.c', 'vm-posix.c',
   include_directories: inc,
   dependencies: [thread_dep],
   c_args: lib_c_args,
