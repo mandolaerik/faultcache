@@ -9,6 +9,7 @@
 #include "faultcache/faultcache.h"
 #include "faultcache/faultcache-client.h"
 #include "faultcache/faultcache-server.h"
+#include "test-common.h"
 #include "util.h"
 
 #include <stdint.h>
@@ -25,8 +26,8 @@ static const size_t sizes[NCHUNKS] = {
     100,
     50,
     30,
-    4096 - 180,
-    8222 - 4096,
+    FC_TEST_PAGE_SIZE - 180,
+    FC_TEST_PAGE_SIZE + 30,
     20,
 };
 
@@ -111,7 +112,7 @@ int main(void) {
     for (int i = 1; i < NCHUNKS; i++)
         offsets[i] = offsets[i - 1] + sizes[i - 1];
     CHECK(offsets[3] == 180);
-    CHECK(offsets[4] == 4096);
+    CHECK(offsets[4] == FC_TEST_PAGE_SIZE);
     CHECK(offsets[5] == 8222);
 
     const uint8_t *p = fc_client_region_base(region);

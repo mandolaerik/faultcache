@@ -6,8 +6,9 @@ import os
 import traceback
 
 import faultcache
+from test_common import PAGE_SIZE
 
-PAGE = 4096
+PAGE = PAGE_SIZE
 
 
 def test_pool_maxsize_default_is_unbounded():

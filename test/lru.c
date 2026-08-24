@@ -4,11 +4,12 @@
  */
 
 #include "faultcache/faultcache.h"
+#include "test-common.h"
 #include "util.h"
 
 #include <string.h>
 
-#define PAGE 4096
+#define PAGE FC_TEST_PAGE_SIZE
 #define NCHUNKS 5
 
 static int counts[NCHUNKS];

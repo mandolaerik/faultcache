@@ -4,17 +4,18 @@
  */
 
 #include "faultcache/faultcache.h"
+#include "test-common.h"
 #include "util.h"
 
 #include <string.h>
 #include <unistd.h>
 
 /*
- * Layout (page size assumed to be 4096, checked in main()):
+ * Layout (page size is FC_TEST_PAGE_SIZE, checked in main()):
  *   chunk0 [0,100)         chunk1 [100,150)       chunk2 [150,180)
- *   chunk3 [180,4096)      <- ends exactly on a page boundary
- *   chunk4 [4096,8222)     <- starts page-aligned, spans two pages
- *   chunk5 [8222,8242)     <- shares its first (and only) page with chunk4
+ *   chunk3 [180,PAGE)      <- ends exactly on a page boundary
+ *   chunk4 [PAGE,2*PAGE+30) <- starts page-aligned, spans two pages
+ *   chunk5 [2*PAGE+30,...)  <- shares its first page with chunk4
  *
  * Chunks 0-3 all share page 0 and must resolve together; chunk3 ending
  * exactly on a page boundary must stop the group from cascading into
@@ -23,7 +24,8 @@
  */
 #define NCHUNKS 6
 static int counts[NCHUNKS];
-static const size_t sizes[NCHUNKS] = {100, 50, 30, 4096 - 180, 8222 - 4096,
+static const size_t sizes[NCHUNKS] = {100, 50, 30, FC_TEST_PAGE_SIZE - 180,
+                                       FC_TEST_PAGE_SIZE + 30,
                                        20};
 
 static void fill_chunk(uint32_t chunk, void *start, size_t size,
@@ -36,7 +38,7 @@ static void fill_chunk(uint32_t chunk, void *start, size_t size,
 
 int main(void) {
     fc_init();
-    CHECK(sysconf(_SC_PAGESIZE) == 4096);
+    CHECK(sysconf(_SC_PAGESIZE) == FC_TEST_PAGE_SIZE);
 
     fc_pool_t *pool = fc_pool_create(0);
     CHECK(pool != nullptr);
@@ -46,8 +48,8 @@ int main(void) {
     for (int i = 1; i < NCHUNKS; i++)
         offsets[i] = offsets[i - 1] + sizes[i - 1];
     CHECK(offsets[3] == 180);
-    CHECK(offsets[4] == 4096);
-    CHECK(offsets[5] == 8222);
+    CHECK(offsets[4] == FC_TEST_PAGE_SIZE);
+    CHECK(offsets[5] == 2 * FC_TEST_PAGE_SIZE + 30);
 
     fc_region_t *region = fc_region_create(pool, NCHUNKS, sizes, fill_chunk, nullptr);
     CHECK(region != nullptr);

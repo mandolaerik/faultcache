@@ -4,6 +4,7 @@
  */
 
 #include "faultcache/faultcache.h"
+#include "test-common.h"
 #include "util.h"
 
 #include <string.h>
@@ -22,7 +23,7 @@ int main(void) {
     fc_pool_t *pool = fc_pool_create(0);
     CHECK(pool != nullptr);
 
-    size_t sizes[] = {4096};
+    size_t sizes[] = {FC_TEST_PAGE_SIZE};
     fc_region_t *region = fc_region_create(pool, 1, sizes, fill_chunk, nullptr);
     CHECK(region != nullptr);
     const void *base = fc_region_base(region);
