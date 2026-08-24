@@ -127,7 +127,8 @@ def test_rejects_at_open(tmpdir, label):
     write(path, **kwargs)
     with faultcache.Pool() as pool:
         with pytest.raises(ValueError, match=expected):
-            LazyIntColumn(pool, path, "i64").close()
+            with LazyIntColumn(pool, path, "i64"):
+                pass
 
 
 @pytest.mark.parametrize("name", ["f", "s"])
@@ -136,7 +137,8 @@ def test_rejects_non_integer_column(tmpdir, name):
     pq.write_table(pa.table({"f": [1.5] * 100, "s": ["x"] * 100}), path)
     with faultcache.Pool() as pool:
         with pytest.raises(ValueError, match="not an integer column"):
-            LazyIntColumn(pool, path, name).close()
+            with LazyIntColumn(pool, path, name):
+                pass
 
 
 def test_column_is_lazy_and_survives_eviction(plain_file):

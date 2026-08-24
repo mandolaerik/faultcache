@@ -31,6 +31,7 @@ from __future__ import annotations
 import argparse
 import sys
 
+import numpy
 import pyarrow as pa
 import pyarrow.parquet as pq
 
@@ -44,51 +45,67 @@ class LazyIntColumn:
     """A parquet integer column, materialised one row group at a time."""
 
     def __init__(self, pool: faultcache.Pool, path: str, name: str):
-        self._file = pq.ParquetFile(path)
-        try:
-            self._open(pool, name)
-        except Exception:
-            self._file.close()
-            raise
-
-    def _open(self, pool: faultcache.Pool, name: str) -> None:
-        metadata = self._file.metadata
-        field = self._file.schema_arrow.field(name)
-        if not pa.types.is_integer(field.type):
-            raise ValueError(f"column {name!r} is not an integer column")
-
+        self._pool = pool
+        self._path = path
         self._name = name
-        self.itemsize = field.type.bit_width // 8
-        signed = pa.types.is_signed_integer(field.type)
-        self._fmt = FORMATS[self.itemsize]
-        if not signed:
-            self._fmt = self._fmt.upper()
-        self.dtype = f"<{'i' if signed else 'u'}{self.itemsize}"
+        self._region = None
+        self._bytes = None
+        self.values = None
+        with pq.ParquetFile(path) as file:
+            metadata = file.metadata
+            field = file.schema_arrow.field(self._name)
+            if not pa.types.is_integer(field.type):
+                raise ValueError(
+                    f"column {self._name!r} is not an integer column")
 
-        index = metadata.schema.names.index(name)
-        for i in range(metadata.num_row_groups):
-            statistics = metadata.row_group(i).column(index).statistics
-            if field.nullable and (statistics is None
-                                   or statistics.null_count != 0):
-                raise ValueError(f"column {name!r} contains nulls, or lacks "
-                                 "the statistics to rule them out")
+            self.itemsize = field.type.bit_width // 8
+            signed = pa.types.is_signed_integer(field.type)
+            self._fmt = FORMATS[self.itemsize]
+            if not signed:
+                self._fmt = self._fmt.upper()
+            self.dtype = f"<{'i' if signed else 'u'}{self.itemsize}"
 
-        self.fills = 0  # how many row groups have actually been read
-        self.row_groups = metadata.num_row_groups
-        self._region = pool.create_region(
-            [metadata.row_group(i).num_rows * self.itemsize
-             for i in range(self.row_groups)],
-            self._fill_chunk)
+            index = metadata.schema.names.index(self._name)
+            for i in range(metadata.num_row_groups):
+                statistics = metadata.row_group(i).column(index).statistics
+                if field.nullable and (statistics is None
+                                    or statistics.null_count != 0):
+                    raise ValueError(
+                        f"column {self._name!r} contains nulls, or lacks "
+                        "the statistics to rule them out")
+
+            self.fills = 0
+            self.row_groups = metadata.num_row_groups
+            self._sizes = [metadata.row_group(i).num_rows * self.itemsize
+                           for i in range(self.row_groups)]
+
+    def __enter__(self) -> "LazyIntColumn":
+        assert self._region is None, "LazyIntColumn cannot be re-entered"
+        self._region = self._pool.create_region(
+            self._sizes, self._fill_chunk)
         self._bytes = self._region.view()
-        # Arrow buffers are little-endian, so this cast is only correct on a
-        # little-endian host; use numpy() (which carries the byte order in
-        # its dtype) elsewhere.
         self.values = self._bytes.cast(self._fmt)
+        return self
+
+    def __exit__(self, *exc_info) -> None:
+        # Dropping the last reference is what releases the region's view;
+        # memoryview.release() would not, and Region.close() refuses while
+        # a view is outstanding. A numpy array from numpy() counts as one
+        # too -- it keeps the memoryview alive as its .base.
+        self.values = None
+        self._bytes = None
+        if self._region is not None:
+            self._region.close()
+            self._region = None
 
     def _fill_chunk(self, chunk: int, buf: memoryview) -> None:
-        table = self._file.read_row_group(chunk, columns=[self._name],
-                                          use_threads=False)
-        array = pa.concat_arrays(table.column(0).chunks)
+        file = pq.ParquetFile(self._path)
+        try:
+            table = file.read_row_group(chunk, columns=[self._name],
+                                        use_threads=False)
+            array = pa.concat_arrays(table.column(0).chunks)
+        finally:
+            file.close()
         # An arrow buffer views as signed bytes; the region's view is
         # unsigned, and memoryview assignment insists the two agree.
         values = memoryview(array.buffers()[1]).cast("B")
@@ -98,8 +115,6 @@ class LazyIntColumn:
 
     def numpy(self):
         """The whole column as a zero-copy read-only numpy array."""
-        import numpy
-
         return numpy.frombuffer(self._bytes, dtype=self.dtype)
 
     def residency(self) -> str:
@@ -121,28 +136,10 @@ class LazyIntColumn:
     def __getitem__(self, key):
         return self.values[key]
 
-    def close(self) -> None:
-        # Dropping the last reference is what releases the region's view;
-        # memoryview.release() would not, and Region.close() refuses while
-        # a view is outstanding. A numpy array from numpy() counts as one
-        # too -- it keeps the memoryview alive as its .base.
-        self.values = None
-        self._bytes = None
-        self._region.close()
-        self._file.close()
-
-    def __enter__(self) -> "LazyIntColumn":
-        return self
-
-    def __exit__(self, *exc_info) -> None:
-        self.close()
-
 
 def demo_numpy(column: LazyIntColumn, note) -> None:
     """Kept in its own function so the array -- and with it the region's
     view -- is gone again by the time the column is closed."""
-    import numpy
-
     array = column.numpy()
     print(f"sum of the first 1000 rows: {array[:1000].sum()}  "
           f"({column.fills} row group(s) read)")
