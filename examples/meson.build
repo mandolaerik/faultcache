@@ -36,7 +36,8 @@ if get_option('pyarrow')
     args: pytest_args + [files('../test/test_parquet_example.py')],
     env: {
       'FAULTCACHE_LIBRARY': faultcache_lib.full_path(),
-      'PYTHONPATH': meson.project_source_root() / 'python' + ':' + shim_build_dir,
+      'PYTHONPATH': meson.project_source_root() / 'python' +
+            python_path_separator + shim_build_dir,
     },
     depends: faultcache_shim,
     timeout: 120)

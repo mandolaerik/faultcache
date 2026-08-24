@@ -3,7 +3,9 @@
 
 test_names = ['basic']
 
-if not is_windows
+if is_windows
+  test_names += ['multi-chunk', 'lru']
+else
   test_names += ['multi-chunk', 'lru', 'boundary', 'readonly', 'unmap', 'misuse',
                  'client-server', 'client-server-shared',
                  'client-server-destroy', 'client-server-reject',
@@ -20,13 +22,20 @@ endforeach
 # they would silently not run at all, which is the failure mode the
 # suite exists to prevent. Checked here rather than skipped over.
 system_py = find_program('python3', required: false)
-if not is_windows and not system_py.found()
-  error('the Python tests need python3')
-elif system_py.found() and run_command(system_py, '-c', 'import pytest',
-                                        check: false).returncode() != 0
-  error('the Python tests need pytest in ' + system_py.full_path())
+if not is_windows
+  if not system_py.found()
+    error('the Python tests need python3')
+  endif
+  if run_command(system_py, '-c', 'import pytest',
+                 check: false).returncode() != 0
+    error('the Python tests need pytest in ' + system_py.full_path())
+  endif
 endif
 pytest_args = ['-m', 'pytest', '-q', '-p', 'no:cacheprovider']
+python_path_separator = ':'
+if is_windows
+  python_path_separator = ';'
+endif
 
 # nm ships with the binutils that provide the assembler and linker, so a
 # build that got this far has it.
@@ -35,7 +44,7 @@ pytest_args = ['-m', 'pytest', '-q', '-p', 'no:cacheprovider']
 # runtime exports its own __gcov_* symbols, so the dynamic symbol table
 # there is not the one we ship. The ABI surface is a property of an
 # ordinary build, and every lane builds one.
-if not get_option('b_coverage')
+if not is_windows and not get_option('b_coverage')
   test('test_exported_symbols', system_py,
     args: pytest_args + [files('test_exported_symbols.py')],
     env: {
@@ -59,7 +68,8 @@ if py.found() and faultcache_shim.found() and get_option('b_sanitize') == 'none'
     args: pytest_args + [files('test_python_bindings.py')],
     env: {
       'FAULTCACHE_LIBRARY': faultcache_lib.full_path(),
-      'PYTHONPATH': meson.project_source_root() / 'python' + ':' + shim_build_dir,
+      'PYTHONPATH': meson.project_source_root() / 'python' +
+            python_path_separator + shim_build_dir,
     },
     depends: faultcache_shim,
     timeout: 30)

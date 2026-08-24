@@ -3,9 +3,12 @@
 
 """Exercises the ctypes bindings in python/faultcache against libfaultcache."""
 import os
+import subprocess
+import sys
 import traceback
 
 import faultcache
+import pytest
 from test_common import PAGE_SIZE
 
 PAGE = PAGE_SIZE
@@ -149,6 +152,7 @@ def _rss_bytes():
         return int(statm.read().split()[1]) * PAGE
 
 
+@pytest.mark.skipif(os.name == "nt", reason="RSS measurement is POSIX-only")
 def test_eviction_releases_resident_memory():
     chunk = 4 << 20
     nchunks = 8
@@ -389,26 +393,26 @@ def test_pool_keeps_region_alive_without_user_reference():
     assert wr() is None
 
 
-def test_write_is_fatal():
+def _child_write_is_fatal():
     def fill_chunk(chunk, buf):
         buf[:] = b"X" * len(buf)
 
     with faultcache.Pool() as pool:
         region = pool.create_region([PAGE], fill_chunk)
         assert region[0] == ord('X')
-
-        pid = os.fork()
-        if pid == 0:
-            # Child: the mapping is read-only, this write must be fatal.
-            import ctypes
-            ctypes.memset(region._addr, ord('Y'), 1)
-            os._exit(0)  # must not be reached
-
-        _, status = os.waitpid(pid, 0)
-        assert os.WIFSIGNALED(status), "write to read-only region did not crash"
+        import ctypes
+        ctypes.memset(region._addr, ord('Y'), 1)
 
 
-def test_access_after_unmap_is_fatal():
+def test_write_is_fatal():
+    result = subprocess.run(
+        [sys.executable, os.path.abspath(__file__)],
+        env={**os.environ, "FAULTCACHE_CHILD_TEST": "write_is_fatal"},
+    )
+    assert result.returncode != 0, "write to read-only region did not crash"
+
+
+def _child_access_after_unmap_is_fatal():
     def fill_chunk(chunk, buf):
         buf[:] = b"Z" * len(buf)
 
@@ -417,16 +421,16 @@ def test_access_after_unmap_is_fatal():
     assert region[0] == ord('Z')
     addr = region._addr
     region.close()
+    import ctypes
+    ctypes.string_at(addr, 1)
 
-    pid = os.fork()
-    if pid == 0:
-        import ctypes
-        ctypes.string_at(addr, 1)
-        os._exit(0)  # must not be reached
 
-    _, status = os.waitpid(pid, 0)
-    assert os.WIFSIGNALED(status), "access after close did not crash"
-    pool.close()
+def test_access_after_unmap_is_fatal():
+    result = subprocess.run(
+        [sys.executable, os.path.abspath(__file__)],
+        env={**os.environ, "FAULTCACHE_CHILD_TEST": "access_after_unmap"},
+    )
+    assert result.returncode != 0, "access after close did not crash"
 
 
 def test_view_zero_copy():
@@ -501,6 +505,7 @@ def test_view_blocks_close():
         assert region.closed
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX fork death test")
 def test_gc_is_suppressed_during_fill():
     """Deterministic reproducer for the cyclic-GC reentrancy hazard.
 
@@ -574,6 +579,7 @@ def test_gc_is_suppressed_during_fill():
         f"child failed (exit {os.WEXITSTATUS(status)}), stderr={err!r}")
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX fork death test")
 def test_refcount_finalizer_during_fill_touching_region_is_fatal():
     """Pins the tighter boundary the GC suppression deliberately stops at.
 
@@ -634,6 +640,7 @@ def test_refcount_finalizer_during_fill_touching_region_is_fatal():
         f"crashed without faultcache's nested-fault diagnostic: {err!r}")
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX fork death test")
 def test_fill_buffer_is_invalidated_after_fill_returns():
     """fill_chunk's buffer must stop working once the callback returns.
 
@@ -679,3 +686,9 @@ def test_fill_buffer_is_invalidated_after_fill_returns():
     code = os.WEXITSTATUS(status)
     assert code != 2, "retained fill_chunk buffer was still readable"
     assert code == 0, f"unexpected failure (exit {code}), stderr={err!r}"
+
+
+if os.environ.get("FAULTCACHE_CHILD_TEST") == "write_is_fatal":
+    _child_write_is_fatal()
+elif os.environ.get("FAULTCACHE_CHILD_TEST") == "access_after_unmap":
+    _child_access_after_unmap_is_fatal()

@@ -1,0 +1,8 @@
+; MinGW import definition for the Windows 10 virtual-memory APIs.
+; The MinGW headers declare these functions, but the toolchain does not
+; ship an import library for the kernelbase.dll exports.
+LIBRARY kernelbase.dll
+EXPORTS
+    VirtualAlloc2
+    MapViewOfFile3
+    UnmapViewOfFileEx
