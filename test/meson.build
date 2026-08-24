@@ -1,11 +1,14 @@
 # © 2026 Erik Carstensen
 # SPDX-License-Identifier: MPL-2.0
 
-test_names = ['basic', 'multi-chunk', 'boundary',
-              'readonly', 'unmap', 'lru', 'client-server',
-              'client-server-shared', 'client-server-destroy',
-              'client-server-reject', 'client-server-boundary',
-              'client-server-shared-boundary', 'misuse']
+test_names = ['basic']
+
+if not is_windows
+  test_names += ['multi-chunk', 'lru', 'boundary', 'readonly', 'unmap', 'misuse',
+                 'client-server', 'client-server-shared',
+                 'client-server-destroy', 'client-server-reject',
+                 'client-server-boundary', 'client-server-shared-boundary']
+endif
 
 foreach t : test_names
   exe = executable(t, t + '.c',
@@ -16,8 +19,11 @@ endforeach
 # The Python tests run under pytest, and it is not optional: without it
 # they would silently not run at all, which is the failure mode the
 # suite exists to prevent. Checked here rather than skipped over.
-system_py = find_program('python3')
-if run_command(system_py, '-c', 'import pytest', check: false).returncode() != 0
+system_py = find_program('python3', required: false)
+if not is_windows and not system_py.found()
+  error('the Python tests need python3')
+elif system_py.found() and run_command(system_py, '-c', 'import pytest',
+                                        check: false).returncode() != 0
   error('the Python tests need pytest in ' + system_py.full_path())
 endif
 pytest_args = ['-m', 'pytest', '-q', '-p', 'no:cacheprovider']

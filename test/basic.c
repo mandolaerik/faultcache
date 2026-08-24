@@ -4,6 +4,7 @@
  */
 
 #include "faultcache/faultcache.h"
+#include "test-common.h"
 #include "util.h"
 
 #include <stdint.h>
@@ -24,7 +25,7 @@ int main(void) {
     fc_pool_t *pool = fc_pool_create(0);
     CHECK(pool != nullptr);
 
-    size_t sizes[] = {4096 * 3 + 17};
+    size_t sizes[] = {FC_TEST_PAGE_SIZE * 3 + 17};
     fc_region_t *region = fc_region_create(pool, 1, sizes, fill_chunk, nullptr);
     CHECK(region != nullptr);
     CHECK(fc_region_size(region) == sizes[0]);
@@ -32,7 +33,7 @@ int main(void) {
     const unsigned char *p = fc_region_base(region);
     CHECK(p[0] == 'A');
     CHECK(p[sizes[0] - 1] == 'A');
-    CHECK(p[4096] == 'A'); /* second page, still the same chunk */
+    CHECK(p[FC_TEST_PAGE_SIZE] == 'A'); /* second page, still the same chunk */
     CHECK(init_count == 1);
 
     /* Re-reading must not re-invoke the callback. */

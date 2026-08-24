@@ -11,6 +11,7 @@
 #include "faultcache/faultcache.h"
 #include "faultcache/faultcache-client.h"
 #include "faultcache/faultcache-server.h"
+#include "test-common.h"
 #include "util.h"
 
 #include <pthread.h>
@@ -20,7 +21,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-#define CHUNK_SIZE 4096
+#define CHUNK_SIZE FC_TEST_PAGE_SIZE
 #define NCHUNKS 3
 
 /* Server-side only: counts actual fill_chunk invocations, via a pipe
