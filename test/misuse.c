@@ -577,6 +577,23 @@ static void test_client_region_create_oversized_descriptor(void) {
     fc_client_pool_destroy(pool);
 }
 
+/* The same guard on the other entry point that arms. Re-arming before
+ * fc_init() has nothing to displace -- a handler installed that early
+ * ends up below us anyway -- so it is a caller bug, not a shortcut for
+ * arming. Forked and before the parent arms, as above. */
+static void test_rearm_without_init(void) {
+    pid_t pid = fork();
+    CHECK(pid >= 0);
+    if (pid == 0) {
+        fc_rearm_handler();
+        _exit(1); /* unreachable if fc_misuse() really abort()s */
+    }
+    int status;
+    CHECK(waitpid(pid, &status, 0) == pid);
+    CHECK(WIFSIGNALED(status));
+    CHECK(WTERMSIG(status) == SIGABRT);
+}
+
 /* The guard against forgetting fc_init(). Forked, and before the parent
  * arms, since the flag it checks is process-wide and one-way. */
 static void test_region_create_without_init(void) {
@@ -605,6 +622,7 @@ int main(void) {
     test_chaining_keeps_us_installed();
     test_rearm_takes_the_top_back();
     test_rearm_chain_cycle_still_crashes();
+    test_rearm_without_init();
     test_region_create_without_init();
 
     fc_init();

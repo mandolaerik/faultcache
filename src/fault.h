@@ -35,7 +35,8 @@ void fault_arm(void);
 /* Arms again on top of whatever has taken the fault handler since, for
  * the cases install order cannot fix (a lazily-arming library, a
  * dlopen'd plugin). Never captures our own handler as the chain target,
- * which would make the chain call itself. */
+ * which would make the chain call itself. Callers guarantee fault_arm()
+ * has already run. */
 void fault_rearm(void);
 
 /* Whether fault_arm() has run, so region creation can refuse to hand

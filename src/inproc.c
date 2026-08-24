@@ -660,6 +660,10 @@ void fc_init(void) {
 }
 
 void fc_rearm_handler(void) {
+    if (!fault_armed())
+        fc_misuse("fc_rearm_handler: fc_init() has not been called -- a "
+                  "handler armed before fc_init() ends up below us anyway, "
+                  "so there is nothing to displace yet");
     fault_rearm();
 }
 
