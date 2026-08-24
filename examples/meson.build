@@ -27,8 +27,13 @@ if get_option('pyarrow')
   if not (py.found() and faultcache_shim.found())
     error('-Dpyarrow=true needs the Python bindings, which are not enabled')
   endif
+  if run_command(py, '-c', 'import pytest', check: false).returncode() != 0
+    error('-Dpyarrow=true needs pytest in ' + py.full_path())
+  endif
+  # Lives in test/ so it is an ordinary pytest module; only the decision
+  # to run it belongs to the example.
   test('parquet_column', py,
-    args: [files('../scripts/verify_parquet.py')],
+    args: pytest_args + [files('../test/test_parquet_example.py')],
     env: {
       'FAULTCACHE_LIBRARY': faultcache_lib.full_path(),
       'PYTHONPATH': meson.project_source_root() / 'python' + ':' + shim_build_dir,

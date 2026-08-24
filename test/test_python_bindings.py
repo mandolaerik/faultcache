@@ -3,7 +3,6 @@
 
 """Exercises the ctypes bindings in python/faultcache against libfaultcache."""
 import os
-import sys
 import traceback
 
 import faultcache
@@ -679,38 +678,3 @@ def test_fill_buffer_is_invalidated_after_fill_returns():
     code = os.WEXITSTATUS(status)
     assert code != 2, "retained fill_chunk buffer was still readable"
     assert code == 0, f"unexpected failure (exit {code}), stderr={err!r}"
-
-
-def main():
-    tests = [
-        test_pool_maxsize_default_is_unbounded,
-        test_exclusive_page_fault_does_not_pull_in_page_sharing_neighbour,
-        test_shared_page_touched_first_fills_every_contributor,
-        test_eviction_frees_exclusive_pages_and_keeps_shared_ones,
-        test_chunk_sharing_a_page_at_both_ends,
-        test_eviction_releases_resident_memory,
-        test_basic_region,
-        test_debug_stats,
-        test_debug_lru_queue_and_history,
-        test_midpoint_demotes_cold_chunks,
-        test_region_identity_hash_behavior,
-        test_boundary_sharing_group,
-        test_slice_step,
-        test_view_zero_copy,
-        test_view_lifetime_tracking,
-        test_view_blocks_close,
-        test_pool_close_closes_regions,
-        test_write_is_fatal,
-        test_access_after_unmap_is_fatal,
-        test_gc_is_suppressed_during_fill,
-        test_refcount_finalizer_during_fill_touching_region_is_fatal,
-        test_fill_buffer_is_invalidated_after_fill_returns,
-    ]
-    for t in tests:
-        t()
-        print(f"ok: {t.__name__}")
-    return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())
