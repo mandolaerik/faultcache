@@ -3,3 +3,6 @@
 
 option('python', type: 'string', value: 'python3',
   description: 'Interpreter to build the _faultcache callback shim against')
+
+option('pyarrow', type: 'boolean', value: false,
+  description: 'Run the parquet example test; needs pyarrow in that interpreter')

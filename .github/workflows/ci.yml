@@ -57,3 +57,20 @@ jobs:
           pip install --disable-pip-version-check meson
 
       - run: python3 scripts/ci.py python:${{ matrix.python-version }}
+
+  parquet-example:
+    runs-on: ubuntu-latest
+    name: parquet
+    steps:
+      - uses: actions/checkout@v4
+
+      # This job is the one place pyarrow is installed, and ci.py's parquet
+      # lane fails rather than skips if it is missing - so the example is
+      # either verified against a real writer or the build is red.
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zlib1g-dev python3-dev
+          pip install --disable-pip-version-check meson pyarrow numpy
+
+      - run: python3 scripts/ci.py parquet

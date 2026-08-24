@@ -18,3 +18,21 @@ if zlib_dep.found() and python3.found()
 else
   message('Skipping compressed-file example: zlib or python3 not found')
 endif
+
+# Checks the parquet example against files written by pyarrow. Opt-in, so
+# that whether it runs is decided by whoever configures the build rather
+# than by what happens to be installed -- see scripts/ci.py's parquet
+# lane. A missing pyarrow is then a failure, not a silent skip.
+if get_option('pyarrow')
+  if not (py.found() and faultcache_shim.found())
+    error('-Dpyarrow=true needs the Python bindings, which are not enabled')
+  endif
+  test('parquet_column', py,
+    args: [files('../scripts/verify_parquet.py')],
+    env: {
+      'FAULTCACHE_LIBRARY': faultcache_lib.full_path(),
+      'PYTHONPATH': meson.project_source_root() / 'python' + ':' + shim_build_dir,
+    },
+    depends: faultcache_shim,
+    timeout: 120)
+endif

@@ -8,7 +8,9 @@
     scripts/ci.py asan coverage
     scripts/ci.py python:3.10
     scripts/ci.py python:/opt/py314t/bin/python3
+    scripts/ci.py parquet:~/venvs/arrow/bin/python3
     scripts/ci.py all -L4
+    scripts/ci.py all --skip-parquet
     scripts/ci.py clean
 
 The workflow in .github/workflows/ci.yml only does checkout + toolchain
@@ -16,10 +18,10 @@ setup and then calls this, so build dirs, configure flags, sanitizer
 options, the coverage gate and the list of supported interpreters have
 exactly one definition.
 
-`all` runs everything it can: the three C lanes plus one python lane per
-entry in PYTHONS. Interpreters that aren't installed are reported and
-skipped, so `all` still works on a bare dev machine; naming one explicitly
-(python:3.10) makes a missing interpreter an error instead.
+`all` runs the three C lanes, one python lane per entry in PYTHONS, and
+the parquet lane. An interpreter that isn't installed is reported and
+skipped, so `all` still works on a bare dev machine; naming one
+explicitly (python:3.10) makes it an error instead.
 
 Two lanes that resolve to the same interpreter are one job - `all
 python:/my/venv/bin/python3.13` builds 3.13 once, from the venv, because a
@@ -75,11 +77,23 @@ LANES = {
 # free-threaded entry: CPython rejects the limited API there outright.
 PYTHONS = ["3.10", "3.14"]
 
-ALL = [*LANES, *(f"python:{v}" for v in PYTHONS)]
+ALL = [*LANES, *(f"python:{v}" for v in PYTHONS), "parquet"]
 
 # A python lane rebuilds only the shim against another interpreter; the C
 # side is already covered by the lanes above.
 PYTHON_TEST = "test_python_bindings"
+
+# The parquet lane is a python lane whose interpreter also needs pyarrow:
+# it checks the parquet example against files a real writer produced.
+PARQUET_TEST = "parquet_column"
+
+
+class LaneError(Exception):
+    """A lane that was asked for and cannot run."""
+
+
+class InterpreterMissing(LaneError):
+    """No interpreter to build against -- the one thing `all` may skip."""
 
 
 def run(cmd, env=None, out=None):
@@ -113,13 +127,21 @@ def interpreter_tag(exe):
     return f"{major}.{minor}"
 
 
+def has_module(exe, module):
+    try:
+        return subprocess.run([exe, "-c", f"import {module}"],
+                              capture_output=True).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
 def resolve_interpreter(spec):
     """Map a python lane's spec to (executable, tag), or (None, None).
 
     A spec that looks like a path is used as-is; otherwise it's a version.
     """
     if os.sep in spec:
-        exe = os.path.abspath(spec)
+        exe = os.path.abspath(os.path.expanduser(spec))
         tag = interpreter_tag(exe)
         return (exe, tag) if tag else (None, None)
 
@@ -137,7 +159,7 @@ def resolve_interpreter(spec):
 def python_lane(spec):
     exe, tag = resolve_interpreter(spec)
     if exe is None:
-        return None
+        raise InterpreterMissing("interpreter not installed")
     return {
         "build_dir": f"build-py{tag}",
         "setup_args": [f"-Dpython={exe}"],
@@ -145,12 +167,38 @@ def python_lane(spec):
     }
 
 
+def parquet_lane(spec):
+    """Bare `parquet` uses whatever python3 is, `parquet:VERSION` or
+    `parquet:PATH` names another one -- which is how you point at a venv
+    that has pyarrow."""
+    exe = resolve_interpreter(spec)[0] if spec else shutil.which("python3")
+    if exe is None:
+        raise LaneError("no such interpreter")
+    if not has_module(exe, "pyarrow"):
+        raise LaneError(
+            f"{exe} has no pyarrow: install it there, point the lane at a "
+            "venv that has it (parquet:/path/to/venv/bin/python3), or pass "
+            "--skip-parquet to leave the lane out on purpose")
+    return {
+        "build_dir": "build-parquet",
+        "setup_args": [f"-Dpython={exe}", "-Dpyarrow=true"],
+        "test_args": [PARQUET_TEST],
+    }
+
+
+# What can appear before the colon in a KIND:SPEC lane name.
+LANE_KINDS = {"python": python_lane, "parquet": parquet_lane}
+
+
 def run_lane(lane, jobs=None, out=None):
     build_dir = Path(lane["build_dir"])
     env = lane.get("env")
     j = [] if jobs is None else [str(jobs)]
 
-    setup = ["meson", "setup", str(build_dir), *lane["setup_args"]]
+    # -Dpyarrow=false first so a lane that wants it has to say so, and a
+    # build dir left over from the parquet lane cannot keep it on.
+    setup = ["meson", "setup", str(build_dir), "-Dpyarrow=false",
+             *lane["setup_args"]]
     if (ROOT / build_dir / "meson-info").is_dir():
         setup.insert(2, "--reconfigure")
 
@@ -189,26 +237,32 @@ def expand(names):
 def plan(names, explicit):
     """Resolve every lane before anything runs.
 
-    Returns (do_clean, jobs, skipped, missing). Jobs are (name, lane) pairs
-    keyed on the build dir, so two lanes naming the same interpreter collapse
-    into one and the later one on the command line wins. `missing` are
-    explicitly named interpreters that aren't installed, `skipped` are ones
-    only `all` asked for.
+    Returns (do_clean, jobs, skipped). Jobs are (name, lane) pairs keyed on
+    the build dir, so two lanes naming the same interpreter collapse into one
+    and the later one on the command line wins. `skipped` are (name, reason)
+    pairs for uninstalled interpreters that only `all` asked for; anything
+    else that cannot run raises LaneError.
     """
     do_clean = False
-    jobs, skipped, missing = {}, [], []
+    jobs, skipped = {}, []
     for name in names:
         if name == "clean":
             do_clean = True
         elif name in LANES:
             jobs[LANES[name]["build_dir"]] = (name, LANES[name])
-        elif (lane := python_lane(name.split(":", 1)[1])) is not None:
-            jobs[lane["build_dir"]] = (name, lane)
-        elif name in explicit:
-            missing.append(name)
         else:
-            skipped.append(name)
-    return do_clean, list(jobs.values()), skipped, missing
+            kind, _, spec = name.partition(":")
+            try:
+                lane = LANE_KINDS[kind](spec)
+            except InterpreterMissing as exc:
+                if name not in explicit:
+                    skipped.append((name, str(exc)))
+                    continue
+                raise LaneError(f"{name}: {exc}") from exc
+            except LaneError as exc:
+                raise LaneError(f"{name}: {exc}") from exc
+            jobs[lane["build_dir"]] = (name, lane)
+    return do_clean, list(jobs.values()), skipped
 
 
 def execute(jobs, lane_jobs, inner_jobs):
@@ -246,7 +300,8 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("lanes", nargs="+", metavar="LANE",
                         help=f"one or more of: {', '.join(LANES)}, "
-                             "python:VERSION, python:PATH, all, clean")
+                             "python:VERSION, python:PATH, parquet, "
+                             "parquet:VERSION, parquet:PATH, all, clean")
     parser.add_argument("-j", "--jobs", type=int, metavar="N",
                         help="compile/test jobs within a lane (default: all "
                              "cores, split across lanes when -L is used)")
@@ -254,22 +309,33 @@ def main():
                         metavar="N",
                         help="lanes to run concurrently (default 1); their "
                              "output is buffered and printed per lane")
+    parser.add_argument("--skip-parquet", action="store_true",
+                        help="leave the parquet lane out; without this it "
+                             "runs, and fails if pyarrow is missing")
     args = parser.parse_args()
 
     names = expand(args.lanes)
     for name in names:
         if name not in LANES and name != "clean" \
-                and not name.startswith("python:"):
+                and name.partition(":")[0] not in LANE_KINDS:
             parser.error(f"unknown lane {name!r}")
     if args.lanes_at_once < 1 or (args.jobs is not None and args.jobs < 1):
         parser.error("-j and -L must be at least 1")
 
-    do_clean, jobs, skipped, missing = plan(names, set(args.lanes))
-    if missing:
-        parser.error(
-            "no interpreter found for " + ", ".join(missing)
-            + "; install it, give a full path (python:/path/to/python3), "
-              "or drop it and let `all` skip it")
+    skipped = []
+    if args.skip_parquet:
+        named = [n for n in args.lanes if n.partition(":")[0] == "parquet"]
+        if named:
+            parser.error(f"--skip-parquet contradicts {', '.join(named)}")
+        skipped = [(n, "--skip-parquet") for n in names
+                   if n.partition(":")[0] == "parquet"]
+        names = [n for n in names if n.partition(":")[0] != "parquet"]
+
+    try:
+        do_clean, jobs, auto_skipped = plan(names, set(args.lanes))
+    except LaneError as exc:
+        parser.error(str(exc))
+    skipped += auto_skipped
 
     lane_jobs = min(args.lanes_at_once, len(jobs)) or 1
     # Keep the total near one job per core rather than lanes x cores.
@@ -282,7 +348,7 @@ def main():
         lines.append("  clean (first)")
     for name, lane in jobs:
         lines.append(f"  {name} -> {lane['build_dir']}")
-    lines += [f"  {n}: skipped, interpreter not installed" for n in skipped]
+    lines += [f"  {name}: skipped, {reason}" for name, reason in skipped]
     if jobs:
         lines.append(f"parallelism: {lane_jobs} lane(s) at a time, "
                      f"{inner_jobs or 'default'} job(s) each")
@@ -299,7 +365,7 @@ def main():
           + (f", {len(skipped)} skipped" if skipped else ""))
     for name, _ in jobs:
         print(f"  {'FAIL' if name in failed else 'ok  '}  {name}")
-    for name in skipped:
+    for name, _ in skipped:
         print(f"  skip  {name}")
     return 1 if failed else 0
 
