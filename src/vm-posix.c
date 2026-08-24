@@ -53,7 +53,7 @@ void vm_scratch_seal(const vm_scratch_t *s) {
     FC_ASSERT(mprotect(s->addr, s->size, PROT_READ) == 0);
 }
 
-void vm_scratch_publish(const vm_scratch_t *s, size_t off, size_t len,
+void vm_scratch_publish(vm_scratch_t *s, size_t off, size_t len,
                         void *target) {
     /* One syscall, so the target goes from inaccessible straight to
      * populated with no observable state in between. */
@@ -61,6 +61,6 @@ void vm_scratch_publish(const vm_scratch_t *s, size_t off, size_t len,
                      MREMAP_MAYMOVE | MREMAP_FIXED, target) != MAP_FAILED);
 }
 
-void vm_scratch_discard(const vm_scratch_t *s, size_t off, size_t len) {
+void vm_scratch_discard(vm_scratch_t *s, size_t off, size_t len) {
     FC_ASSERT(munmap((char *)s->addr + off, len) == 0);
 }

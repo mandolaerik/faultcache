@@ -189,7 +189,8 @@ _lib.fc_region_debug_lru_history.argtypes = [
 ]
 _lib.fc_region_debug_lru_history.restype = None
 
-_libc = ctypes.CDLL(None, use_errno=True)
+_libc = (ctypes.CDLL("msvcrt", use_errno=True)
+         if os.name == "nt" else ctypes.CDLL(None, use_errno=True))
 _libc.memcpy.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_size_t]
 _libc.memcpy.restype = ctypes.c_void_p
 

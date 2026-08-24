@@ -74,3 +74,33 @@ jobs:
           pip install --disable-pip-version-check meson pyarrow numpy pytest
 
       - run: python3 scripts/ci.py parquet
+
+  windows:
+    runs-on: windows-latest
+    name: windows
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-meson
+            mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-python
+            mingw-w64-x86_64-python-pytest
+
+      - name: Configure and test
+        run: |
+          export PATH="/mingw64/bin:/usr/bin:$PATH"
+          export CC=/mingw64/bin/gcc
+          export AR=/mingw64/bin/ar
+          python3 -c "import pytest; print('pytest', pytest.__version__)"
+          meson setup build-win -Dpyarrow=false \
+            -Dc_args='-D_WIN32_WINNT=0x0A00 -DNTDDI_VERSION=0x0A000005'
+          meson test -C build-win --print-errorlogs

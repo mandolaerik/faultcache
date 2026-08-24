@@ -55,6 +55,9 @@ void vm_decommit(void *addr, size_t size);
 typedef struct {
     void *addr;
     size_t size;
+    /* Platform-owned bookkeeping; POSIX leaves both zero. */
+    void *section;
+    size_t consumed;
 } vm_scratch_t;
 
 vm_scratch_t vm_scratch_create(size_t size);
@@ -65,11 +68,16 @@ void vm_scratch_seal(const vm_scratch_t *s);
 
 /* Moves [off, off+len) to `target`, atomically replacing whatever the
  * reservation had there. The published bytes leave the scratch buffer;
- * whatever remains is still the caller's to discard. */
-void vm_scratch_publish(const vm_scratch_t *s, size_t off, size_t len,
+ * whatever remains is still the caller's to discard.
+ *
+ * publish and discard together always consume the whole scratch, one
+ * disjoint range at a time, and it must not be touched afterwards --
+ * hence non-const: a platform may need to free the backing store on
+ * whichever call completes the set. */
+void vm_scratch_publish(vm_scratch_t *s, size_t off, size_t len,
                         void *target);
 
 /* Throws away a piece that will never be published. */
-void vm_scratch_discard(const vm_scratch_t *s, size_t off, size_t len);
+void vm_scratch_discard(vm_scratch_t *s, size_t off, size_t len);
 
 #endif
