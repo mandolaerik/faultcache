@@ -33,7 +33,7 @@
  * The client half of the client/server split (see
  * faultcache-client.h): resolution happens in a separate server
  * process, reached via UFFDIO_COPY over the uffd fd handed off at
- * creation time -- unlike fc_pool_t (src/sigsegv.c), a
+ * creation time -- unlike fc_pool_t (src/inproc.c), a
  * client region has no local handler thread of its own.
  *
  * Tracked by its owning pool in an intrusive circular doubly-linked

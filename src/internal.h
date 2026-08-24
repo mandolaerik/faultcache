@@ -2,7 +2,7 @@
  * © 2026 Erik Carstensen
  * SPDX-License-Identifier: MPL-2.0
  *
- * Shared between both backends (sigsegv.c, client.c) --
+ * Shared between both backends (inproc.c, client.c) --
  * not installed, not part of any public header.
  */
 #ifndef FAULTCACHE_INTERNAL_H
