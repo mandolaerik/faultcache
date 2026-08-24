@@ -111,9 +111,14 @@ FC_API void fc_init(void);
  * Re-installs faultcache's handler on top of whatever holds SIGSEGV now and
  * makes that the new chain target, so faults outside live unresolved regions
  * are passed on to it. Displacing our own handler leaves the chain target
- * alone, so repeated calls can't route us through ourselves. Implies fc_init().
- * Call it where you control the threads, as with init: it rewrites the target
- * that faulting threads read.
+ * alone, so repeated calls can't route us through ourselves. Call it where you
+ * control the threads, as with init: it rewrites the target that faulting
+ * threads read.
+ *
+ * fc_init() must have run. Calling this first is reported as misuse rather
+ * than arming for you: by the rule below there is nothing to displace yet, and
+ * taking a process-wide handler in a process that has not asked for one is
+ * exactly what the explicit fc_init() exists to avoid.
  *
  * You need this function when two things coincide: something else arms SIGSEGV
  * without passing on the faults it did not cause, and it does so after

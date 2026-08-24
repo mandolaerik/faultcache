@@ -99,7 +99,6 @@ void fault_arm(void) {
 }
 
 void fault_rearm(void) {
-    fault_arm();
     install_handler();
 }
 
