@@ -1,7 +1,7 @@
 # © 2026 Erik Carstensen
 # SPDX-License-Identifier: MPL-2.0
 
-lib_c_args = []
+lib_c_args = ['-DFC_BUILDING_LIB']
 if get_option('b_coverage')
   # Lets internal.h call __gcov_dump() to flush counters right
   # before a signal-terminated death (gcov otherwise only writes .gcda at
@@ -15,6 +15,8 @@ faultcache_lib = library('faultcache', 'client.c', 'server.c',
   include_directories: inc,
   dependencies: [thread_dep],
   c_args: lib_c_args,
+  # Only FC_API-marked declarations get out; see faultcache.h.
+  gnu_symbol_visibility: 'hidden',
   install: true)
 
 faultcache_dep = declare_dependency(
